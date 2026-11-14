@@ -17,6 +17,7 @@
     <a class="brand" href="#top"><img src="icon.png" alt="" width="32" height="32">worki</a>
     <nav>
       <a href="#isolation">Isolation</a>
+      <a href="#accounts">Accounts</a>
       <a href="#chat">Chat</a>
       <a href="#review">Pull requests</a>
       <a href="#start">Get started</a>
@@ -107,11 +108,28 @@
       <ul class="points">
         <li><b>Only the worktree.</b> It appears at the same path as on your Mac. Git hooks and config stay read-only, so an agent can't plant anything that later runs as you.</li>
         <li><b>A doctor for every backend.</b> Plain-language checks with one-click fixes: create the agent user, start the sandbox daemon or Podman machine, build the image.</li>
-        <li><b>Agents ready inside.</b> Agents are installed where they run the first time you start them, bring your settings and skills, and sign in with your subscription. Codex works too.</li>
+        <li><b>Agents ready inside.</b> Agents are installed where they run the first time you start them, get the Claude Code settings you define, and sign in with your subscription. Codex works too.</li>
         <li><b>Secrets stay in your Keychain</b> and reach sessions as environment variables.</li>
         <li><b>Snapshots.</b> Install a JDK or system packages once and save the sandbox or container; new worktrees of the project start from it.</li>
         <li><b>No leftovers.</b> Environments go away with their worktree or project.</li>
       </ul>
+    </section>
+
+    <section id="accounts" class="feature">
+      <div class="heading">
+        <p class="eyebrow">Several Claude accounts</p>
+        <h2>Your work subscription for work projects, your own for the rest. Side by side.</h2>
+        <p>No signing out and in again. In Docker Sandboxes, Docker and Podman.</p>
+      </div>
+      <div class="grid">
+        <article><h3>Sign in once per account</h3><p>Add accounts in the settings and approve each in your browser. Your own Claude Code login stays untouched.</p></article>
+        <article><h3>One account per project</h3><p>Mark a default; any project can pick another. The sidebar and every session show which account is in use.</p></article>
+        <article><h3>Real subscription logins</h3><p>Not API keys: logins renew themselves and Remote Control works. A project's worktrees all share one.</p></article>
+      </div>
+      <figure class="shot">
+        <img src="screenshots/accounts.png" width="3200" height="2000" loading="lazy"
+             alt="Two Claude Code accounts in the Agents settings, one marked as default; the sidebar shows each project's account">
+      </figure>
     </section>
 
     <section id="chat" class="feature">
@@ -173,7 +191,7 @@
       </div>
       <figure class="shot">
         <img src="screenshots/settings.png" width="3200" height="2000" loading="lazy"
-             alt="Isolation settings with checks and the agents installed in the sandbox">
+             alt="Isolation settings: Docker Sandboxes starting from a snapshot, with passing checks">
       </figure>
     </section>
 

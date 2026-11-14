@@ -139,7 +139,7 @@ const session = (id: string, path: string, activity: string, extra: object = {})
 });
 
 const sessions = [
-  session("s1", checkout, "working", { account: { email: null, plan: null, organization: null, token: true, tokenName: "work account" } }),
+  session("s1", checkout, "working", { account: { email: "me@example.com", plan: "pro", organization: null, token: false, tokenName: null } }),
   session("s2", login, "waiting", { attention: "Claude needs your permission to use Bash" }),
   session("s3", refunds, "working"),
   session("s4", staging, "waiting", { attention: "Which region should the staging cluster use?" }),
@@ -726,6 +726,15 @@ if (scene === "playful") {
 }
 if (scene === "settings") useUi.getState().openDialog({ kind: "settings", tab: "isolation" });
 if (scene === "git") useUi.getState().openDialog({ kind: "settings", tab: "git" });
+if (scene === "accounts") {
+  useUi.getState().openDialog({ kind: "settings", tab: "agents" });
+  const show = () => {
+    const heading = [...document.querySelectorAll("h3")].find((h) => h.textContent === "Claude Code accounts");
+    if (heading) heading.scrollIntoView({ block: "center" });
+    else setTimeout(show, 100);
+  };
+  show();
+}
 if (scene === "isolation") {
   const open = () => {
     const badge = [...document.querySelectorAll("button")].find((b) => b.title.includes("click to change"));

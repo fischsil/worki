@@ -18,13 +18,33 @@ import {
   Server,
   Settings,
   Settings2,
+  UserRound,
 } from "lucide-react";
 import { useState } from "react";
 
-import { api, errorMessage, type Project, type PullRequest, type Worktree, worktreeLabel } from "../lib/api";
+import {
+  api,
+  errorMessage,
+  isContainer,
+  type Project,
+  projectIsolation,
+  type PullRequest,
+  type Worktree,
+  worktreeLabel,
+} from "../lib/api";
 import { identityOf, isAgent, useJustChanged, usePlayful } from "../lib/playful";
 import { useWorktreeComments } from "../lib/review";
-import { keys, useAddProject, useProjects, usePullRequest, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
+import {
+  keys,
+  useAddProject,
+  useAgentSettings,
+  useIsolationSettings,
+  useProjects,
+  usePullRequest,
+  useSessions,
+  useWorktrees,
+  useWorktreeStatus,
+} from "../lib/queries";
 import { useKeepAwake } from "../lib/awake";
 import { useUi } from "../lib/store";
 import { plural } from "../lib/text";
@@ -97,11 +117,22 @@ export function Sidebar() {
   );
 }
 
+/** The email of the Claude Code account the project's agents use, when its isolation uses one. */
+function useProjectAccount(project: Project): string | null {
+  const { data: agents } = useAgentSettings();
+  const { data: isolation } = useIsolationSettings();
+  if (!agents || !isolation || !isContainer(projectIsolation(project, isolation.default))) return null;
+  const id = agents.projectAccounts[project.id] ?? agents.defaultAccount;
+  const account = agents.accounts.find((a) => a.id === id);
+  return account ? (account.email ?? "not signed in") : null;
+}
+
 function ProjectNode({ project }: { project: Project }) {
   const collapsed = useUi((s) => !!s.collapsed[project.id]);
   const toggle = useUi((s) => s.toggleCollapsed);
   const openDialog = useUi((s) => s.openDialog);
   const { data: worktrees = [], error } = useWorktrees(project.id);
+  const account = useProjectAccount(project);
   const qc = useQueryClient();
   const [fetching, setFetching] = useState(false);
 
@@ -134,11 +165,20 @@ function ProjectNode({ project }: { project: Project }) {
               <FolderGit2 size={14} />
             </Hint>
           )}
-          <span className="truncate font-semibold" title={project.remote ? `${project.remote.host}:${project.repoPath}` : project.repoPath}>
+          <span className="max-w-[75%] shrink-0 truncate font-semibold" title={project.remote ? `${project.remote.host}:${project.repoPath}` : project.repoPath}>
             {project.name}
           </span>
+          {account && (
+            <span
+              className="flex min-w-0 flex-1 items-center justify-end gap-1 pr-1 fs-sidebar-xs text-faint group-hover:hidden group-has-disabled:hidden"
+              title={`Claude Code account: ${account}`}
+            >
+              <UserRound size={11} className="shrink-0" />
+              <span className="truncate">{account}</span>
+            </span>
+          )}
         </button>
-        <div className="flex opacity-0 group-hover:opacity-100 has-disabled:opacity-100">
+        <div className={clsx("flex", account ? "hidden group-hover:flex has-disabled:flex" : "opacity-0 group-hover:opacity-100 has-disabled:opacity-100")}>
           <IconButton label="Fetch (git fetch --all)" onClick={fetchAll} disabled={fetching}>
             <RefreshCw size={13} className={clsx(fetching && "animate-spin")} />
           </IconButton>

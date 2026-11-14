@@ -55,12 +55,12 @@ checks it and cleans it up again.
 - **A doctor for every backend.** Checks phrased the way you'd want to read them ("_worki can't
   read files in your home folder") with one-click fixes: create the agent user, start the
   sandbox daemon or Podman machine, build the image.
-- **Agents ready inside the sandbox.** Claude Code or Codex is installed in a
+- **Agents ready inside the sandbox.** Claude Code, Codex or any other agent is installed in a
   worktree's environment the first time you start it there, and the agent trusts the worktree
-  without asking. Copy your agent configuration (settings, `CLAUDE.md`, agents, commands, skills)
-  into every environment, and sign in with a token that uses your subscription, while your own
-  login stays untouched. Codex signs in per environment with a code you approve in the
-  browser.
+  without asking. Claude Code gets the settings you define for isolated sessions and signs in
+  with one of your [accounts](#several-claude-accounts-side-by-side) (with User Isolation, a token
+  that uses your subscription), while your own login stays untouched. Codex signs in per
+  environment with a code you approve in the browser.
 - **Secrets stay in your Keychain.** Tokens are stored per isolation and passed to sessions as
   environment variables.
 - **Snapshots.** Install what a project needs (a JDK, system packages) once, save the worktree's
@@ -71,8 +71,29 @@ checks it and cleans it up again.
 - **No leftovers.** Environments are removed together with their worktree or project.
 
 <p align="center">
-  <img src="docs/screenshots/settings.png" alt="Isolation settings with checks and agents installed in the sandbox" width="900">
+  <img src="docs/screenshots/settings.png" alt="Isolation settings: Docker Sandboxes starting from a snapshot, with passing checks" width="900">
 </p>
+
+## Several Claude accounts, side by side
+
+Use your company's Claude subscription for work projects and your own for side projects, at the
+same time, without signing out and in again.
+
+<p align="center">
+  <img src="docs/screenshots/accounts.png" alt="Two Claude Code accounts in the Agents settings, one marked as default; the sidebar shows each project's account" width="900">
+</p>
+
+- **Sign in once per account.** Add accounts under Settings › Agents and approve each one in your
+  browser. worki keeps every login in its own folder, apart from your own Claude Code login.
+- **One account per project.** Mark one account as the default; any project can pick another.
+  The sidebar shows each project's account, and every session shows the account it's actually
+  signed in as.
+- **Real subscription logins.** Not API keys: the login renews itself, and Remote Control works.
+  All worktrees of a project share it, so you sign in once, not per worktree.
+- **Switching is safe.** When a project changes account, each worktree's sandbox or container
+  moves over the next time an agent starts there while none is running.
+
+Accounts work in Docker Sandboxes, Docker and Podman.
 
 ## Chat or terminal
 
@@ -95,8 +116,8 @@ Run Claude Code or Codex in its terminal, or as a chat that worki draws itself:
 - **Picks up where you left off.** Chats reopen with their history when worki starts.
 - **Continue on your phone.** Turn on Remote Control below the message box and carry on in the
   Claude app or on claude.ai/code; what you send from there shows up in worki. Under Settings ›
-  Agents, new Claude Code sessions, terminals included, start with it. In Docker Sandboxes it
-  needs `sbx settings set claude.remoteControl true` once.
+  Agents, new Claude Code sessions, terminals included, start with it. worki allows it in Docker
+  Sandboxes for you.
 
 <p align="center">
   <img src="docs/screenshots/terminal.png" alt="Claude Code in its terminal, running the tests in a Docker Sandbox" width="900">

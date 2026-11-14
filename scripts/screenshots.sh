@@ -8,13 +8,14 @@ CHROME=${CHROME:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
 PORT=1431
 OUT=docs/screenshots
 
-node_modules/.bin/vite --port "$PORT" --strictPort >/dev/null 2>&1 &
+# Demo mode has its own dependency cache, so this doesn't disturb a running `tauri dev`.
+node_modules/.bin/vite --mode demo --port "$PORT" --strictPort >/dev/null 2>&1 &
 VITE=$!
 PROFILES=$(mktemp -d)
 trap 'kill "$VITE" 2>/dev/null; rm -rf "$PROFILES"' EXIT
 until curl -sf "http://localhost:$PORT/demo.html" >/dev/null; do sleep 0.3; done
 
-scenes=${*:-hero main chat terminal branch isolation settings}
+scenes=${*:-hero main chat terminal branch isolation settings accounts}
 for scene in $scenes; do
   # A fresh profile for every scene: what one scene saves would change the next.
   PROFILE="$PROFILES/$scene"
