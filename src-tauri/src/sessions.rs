@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
@@ -7,9 +9,9 @@ use worki_core::launch::{
     chat_history_command, chat_request, continue_command, resumes, session_env, session_request,
     ChatAgent, ClaudeOptions, CHAT_PROMPT,
 };
-use worki_core::{AgentProfile, Host, Isolation, JsonObject, Project, SavedSession};
+use worki_core::{secrets, AgentProfile, Host, Isolation, JsonObject, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
-use worki_isolation::SessionMeta;
+use worki_isolation::{LaunchRequest, SessionMeta};
 use worki_pty::chat::{
     Attachment, ChatProtocol, ChatSetting, ClaudeProtocol, CodexOptions, CodexProtocol,
     PermissionAnswer,
@@ -123,6 +125,8 @@ async fn start_session(
         env,
         remote_control,
         claude_settings,
+        token_name,
+        account_dir,
         ..
     } = prepare(
         state,
@@ -137,6 +141,14 @@ async fn start_session(
         title: title.clone(),
         profile_id: profile_id.clone(),
     };
+    let account_check = AccountCheck::new(
+        profile.as_ref(),
+        &isolation,
+        &worktree_path,
+        env.clone(),
+        token_name,
+        account_dir,
+    );
     let req = session_request(
         profile.as_ref(),
         &worktree_path,
@@ -174,7 +186,7 @@ async fn start_session(
         .sessions
         .spawn(SpawnSpec {
             id,
-            worktree_path,
+            worktree_path: worktree_path.clone(),
             profile_id,
             title,
             program: launch.program,
@@ -194,7 +206,121 @@ async fn start_session(
             tracing::warn!("saving session {}: {e:#}", info.id);
         }
     }
+    if let Some(check) = account_check {
+        check_account(state, &info.id, check);
+    }
     Ok(info)
+}
+
+/// How to read who a Claude Code session is signed in as: `claude auth status` where it runs,
+/// so it's the account actually in use, with the name the user gave its sign-in token and the
+/// account folder it signs in with.
+#[derive(Clone)]
+struct AccountCheck {
+    isolation: Isolation,
+    req: LaunchRequest,
+    token_name: Option<String>,
+    account_dir: Option<PathBuf>,
+}
+
+impl AccountCheck {
+    /// `None` for agents other than Claude Code.
+    fn new(
+        profile: Option<&AgentProfile>,
+        isolation: &Isolation,
+        worktree: &Path,
+        env: Vec<(String, String)>,
+        token_name: Option<String>,
+        account_dir: Option<PathBuf>,
+    ) -> Option<Self> {
+        let profile = profile.filter(|p| p.executable() == Some("claude"))?;
+        let claude = profile.command.split_whitespace().next()?;
+        Some(Self {
+            isolation: isolation.clone(),
+            req: LaunchRequest {
+                cwd: worktree.to_owned(),
+                command: Some(format!("exec {claude} auth status --json")),
+                interactive: false,
+                stdin: false,
+                env,
+                session: None,
+            },
+            token_name,
+            account_dir,
+        })
+    }
+}
+
+/// Account checks of running sessions by session id, to run again when their account is signed
+/// in again ([`recheck_account`]).
+#[derive(Default)]
+pub struct AccountChecks(Mutex<HashMap<String, AccountCheck>>);
+
+/// Shows on the session who it's signed in as, beside the session so a slow check doesn't hold
+/// up its start.
+fn check_account(state: &AppState, id: &str, check: AccountCheck) {
+    let checks = state.app.state::<AccountChecks>();
+    checks
+        .0
+        .lock()
+        .unwrap()
+        .insert(id.to_owned(), check.clone());
+    run_check(&state.app, id, check);
+}
+
+/// Checks the running sessions that sign in with the account in `dir` again.
+pub fn recheck_account(app: &tauri::AppHandle, dir: &Path) {
+    let running: Vec<String> = app
+        .state::<AppState>()
+        .sessions
+        .list()
+        .into_iter()
+        .filter(|s| s.state == SessionState::Running)
+        .map(|s| s.id)
+        .collect();
+    let state = app.state::<AccountChecks>();
+    let due: Vec<(String, AccountCheck)> = {
+        let mut checks = state.0.lock().unwrap();
+        checks.retain(|id, _| running.contains(id));
+        checks
+            .iter()
+            .filter(|(_, check)| check.account_dir.as_deref() == Some(dir))
+            .map(|(id, check)| (id.clone(), check.clone()))
+            .collect()
+    };
+    for (id, check) in due {
+        run_check(app, &id, check);
+    }
+}
+
+fn run_check(app: &tauri::AppHandle, id: &str, check: AccountCheck) {
+    let (app, id) = (app.clone(), id.to_owned());
+    tauri::async_runtime::spawn(async move {
+        match read_account(&check.isolation, &check.req, check.token_name).await {
+            Ok(account) => {
+                app.state::<AppState>()
+                    .sessions
+                    .set_account(&id, account)
+                    .ok();
+            }
+            Err(e) => tracing::warn!("checking the account of session {id}: {e}"),
+        }
+    });
+}
+
+async fn read_account(
+    isolation: &Isolation,
+    req: &LaunchRequest,
+    token_name: Option<String>,
+) -> CmdResult<Option<worki_pty::Account>> {
+    let (isolation, req) = (isolation.clone(), req.clone());
+    let launch = blocking(move || isolation.backend().launch(&req)).await?;
+    let status = worki_core::setup::run_captured(launch).await.map_err(err)?;
+    let mut account = crate::agents::account_from_auth_status(&status);
+    if let Some(account) = account.as_mut().filter(|a| a.token) {
+        account.token_name = token_name;
+    }
+    Ok(account)
 }
 
 /// What starting any session in a worktree needs: the agent, the isolation (checked, with the
@@ -223,6 +349,10 @@ struct Prepared {
     remote_control: bool,
     /// Claude Code settings for the session: the user's in isolated environments, else none.
     claude_settings: JsonObject,
+    /// The name the user gave the sign-in token the session gets, if any.
+    token_name: Option<String>,
+    /// The folder of the account the session signs in with, if it has one.
+    account_dir: Option<PathBuf>,
 }
 
 /// Names of the events the session start sends; `ui/src/lib/events.ts` has the same.
@@ -334,12 +464,20 @@ async fn prepare(
             .map_err(err)?;
     }
 
+    let in_use = state
+        .sessions
+        .list()
+        .iter()
+        .any(|s| s.worktree_path == worktree_path && s.state == SessionState::Running);
     projects
-        .grant_access(&project, Some(worktree_path))
+        .grant_access_with(&project, Some(worktree_path), !in_use)
         .await
         .map_err(err)?;
     if let Some(p) = &profile {
         ready_agent(state, &project, worktree_path, &isolation, p).await?;
+        if settings.remote_control && p.executable() == Some("claude") {
+            allow_remote_control(&isolation).await;
+        }
     }
 
     let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -349,7 +487,20 @@ async fn prepare(
         .unwrap_or_else(|| "Shell".into());
     let mut env = session_env(&id, worktree_path);
     env.extend(projects.secret_env(&isolation).map_err(err)?);
+    let account_dir = projects.account_dir(&project, &isolation).map_err(err)?;
+    if let Some(dir) = &account_dir {
+        if profile.as_ref().and_then(AgentProfile::executable) == Some("claude") {
+            let (dir, worktree) = (dir.clone(), worktree_path.to_owned());
+            blocking(move || worki_core::agents::trust_in_account(&dir, &worktree)).await?;
+        }
+        let token = worki_core::agents::kit("claude").and_then(|k| k.sign_in);
+        env.retain(|(name, _)| token.is_none_or(|t| name != t.secret));
+    }
     let confined = isolation.is_confined();
+    let token_name = env
+        .iter()
+        .find_map(|(_, value)| settings.token_names.get(&secrets::fingerprint(value)))
+        .cloned();
     Ok(Prepared {
         project,
         profile,
@@ -364,6 +515,8 @@ async fn prepare(
         } else {
             JsonObject::new()
         },
+        token_name,
+        account_dir,
     })
 }
 
@@ -612,6 +765,7 @@ pub async fn restore_remote_sessions(state: State<'_, AppState>) -> CmdResult<us
                 attention: None,
                 usage: Vec::new(),
                 agent: Default::default(),
+                account: None,
                 created_at: 0,
             };
             if state
@@ -679,6 +833,8 @@ async fn start_chat(
         confined,
         remote_control,
         claude_settings,
+        token_name,
+        account_dir,
     } = prepare(state, &project_id, &worktree_path, Some(&profile_id), id).await?;
     let profile = profile.ok_or("pick an agent to chat with")?;
     let claude = ClaudeOptions {
@@ -686,6 +842,14 @@ async fn start_chat(
         name: session_name(&project, &worktree_path),
         settings: claude_settings,
     };
+    let account_check = AccountCheck::new(
+        Some(&profile),
+        &isolation,
+        &worktree_path,
+        env.clone(),
+        token_name,
+        account_dir,
+    );
     let (agent, req) =
         chat_request(&profile, &worktree_path, env, &id, &claude).ok_or_else(|| {
             format!(
@@ -730,6 +894,9 @@ async fn start_chat(
             history,
         })
         .map_err(err)?;
+    if let Some(check) = account_check {
+        check_account(state, &info.id, check);
+    }
     let saved = SavedSession {
         id,
         project_id: project.id,
@@ -873,12 +1040,32 @@ pub fn answer_chat_permission(
 }
 
 #[tauri::command]
-pub fn change_chat_setting(
+pub async fn change_chat_setting(
     state: State<'_, AppState>,
     id: String,
     setting: ChatSetting,
 ) -> CmdResult<()> {
+    if setting == ChatSetting::RemoteControl(true) {
+        if let Some(session) = state.sessions.list().into_iter().find(|s| s.id == id) {
+            let path = &session.worktree_path;
+            let project = project_for(&state, path)?;
+            let isolation = state
+                .projects
+                .isolation_for_worktree(&project, path)
+                .map_err(err)?;
+            allow_remote_control(&isolation).await;
+        }
+    }
     state.sessions.change_setting(&id, &setting).map_err(err)
+}
+
+/// Failing only means Remote Control may not connect, which the session shows, so it doesn't
+/// stop the session from starting.
+async fn allow_remote_control(isolation: &Isolation) {
+    let isolation = isolation.clone();
+    if let Err(e) = blocking(move || isolation.allow_remote_control()).await {
+        tracing::warn!("allowing Remote Control: {e}");
+    }
 }
 
 #[tauri::command]

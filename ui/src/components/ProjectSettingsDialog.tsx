@@ -16,6 +16,7 @@ import { useUi } from "../lib/store";
 import { AgentsPanel } from "./AgentsPanel";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
+import { ProjectAccount } from "./ProjectAccount";
 import { parseRemote, RemoteFields, remoteForm } from "./RemoteFields";
 import { Button, Dialog, ErrorText, Field, Input, Textarea } from "./ui";
 
@@ -148,6 +149,7 @@ export function ProjectSettingsDialog({ project, onClose }: { project: Project; 
           />
         </Field>
       )}
+      <ProjectAccount projectId={project.id} isolation={effective} />
       {effective.kind !== "none" && (
         <DoctorPanel key={JSON.stringify(effective)} isolation={effective} projectId={project.id} />
       )}

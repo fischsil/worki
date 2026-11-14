@@ -17,6 +17,10 @@
   --color-accent-fg: var(--accent-fg);
   --color-added: var(--added);
   --color-removed: var(--removed);
+  --color-diff-added: var(--diff-added);
+  --color-diff-added-word: var(--diff-added-word);
+  --color-diff-removed: var(--diff-removed);
+  --color-diff-removed-word: var(--diff-removed-word);
   --color-warn: var(--warn);
   --color-sidebar: var(--sidebar);
 }
@@ -37,6 +41,20 @@
   --accent-fg: #ffffff;
   --added: #0c5323;
   --removed: #991b1b;
+  --diff-added: #dcfce4;
+  --diff-added-word: #a5eeb8;
+  --diff-removed: #ffe4e2;
+  --diff-removed-word: #ffbdb8;
+  --shiki-foreground: var(--fg);
+  --shiki-token-keyword: #cf222e;
+  --shiki-token-string: #0a3069;
+  --shiki-token-string-expression: var(--shiki-token-string);
+  --shiki-token-comment: #59636e;
+  --shiki-token-constant: #0550ae;
+  --shiki-token-function: #6639ba;
+  --shiki-token-parameter: #953800;
+  --shiki-token-punctuation: var(--fg);
+  --shiki-token-link: #0a3069;
   --warn: #713405;
   color-scheme: light dark;
 }
@@ -56,6 +74,17 @@
     --accent: #4c97f0;
     --added: #3fb950;
     --removed: #f85149;
+    --diff-added: rgb(63 185 80 / 0.14);
+    --diff-added-word: rgb(63 185 80 / 0.42);
+    --diff-removed: rgb(248 81 73 / 0.14);
+    --diff-removed-word: rgb(248 81 73 / 0.42);
+    --shiki-token-keyword: #ff7b72;
+    --shiki-token-string: #a5d6ff;
+    --shiki-token-comment: #8b949e;
+    --shiki-token-constant: #79c0ff;
+    --shiki-token-function: #d2a8ff;
+    --shiki-token-parameter: #ffa657;
+    --shiki-token-link: #a5d6ff;
     --warn: #e3b341;
   }
 }
@@ -74,6 +103,17 @@
   --accent: #4c97f0;
   --added: #3fb950;
   --removed: #f85149;
+  --diff-added: rgb(63 185 80 / 0.14);
+  --diff-added-word: rgb(63 185 80 / 0.42);
+  --diff-removed: rgb(248 81 73 / 0.14);
+  --diff-removed-word: rgb(248 81 73 / 0.42);
+  --shiki-token-keyword: #ff7b72;
+  --shiki-token-string: #a5d6ff;
+  --shiki-token-comment: #8b949e;
+  --shiki-token-constant: #79c0ff;
+  --shiki-token-function: #d2a8ff;
+  --shiki-token-parameter: #ffa657;
+  --shiki-token-link: #a5d6ff;
   --warn: #e3b341;
   color-scheme: dark;
 }

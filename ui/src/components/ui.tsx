@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { Star, X } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -384,5 +384,31 @@ export function LogView({ lines, className }: { lines: LogLine[]; className?: st
       ))}
       <div ref={end} />
     </div>
+  );
+}
+
+/** Marks the default among a list's items, or offers to make an item the default. */
+export function DefaultMark({
+  isDefault,
+  onMakeDefault,
+  label = "Default · ⌘T",
+}: {
+  isDefault: boolean;
+  onMakeDefault: () => void;
+  label?: string;
+}) {
+  if (isDefault) {
+    return (
+      <span className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-accent/15 px-2 text-[11px] font-medium text-accent">
+        <Star size={11} className="fill-current" />
+        {label}
+      </span>
+    );
+  }
+  return (
+    <Button variant="ghost" onClick={onMakeDefault} className="h-6 shrink-0 px-2 text-[11px]">
+      <Star size={11} />
+      Make default
+    </Button>
   );
 }

@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import {
   api,
+  isContainer,
   type Isolation,
   isolationLabel,
   projectIsolation,
@@ -158,10 +159,6 @@ function WorktreeIsolationDialog({
       <ErrorText>{error}</ErrorText>
     </Dialog>
   );
-}
-
-export function isContainer(i: Isolation | ProjectIsolation | null | undefined): boolean {
-  return i?.kind === "dockerSandbox" || i?.kind === "docker" || i?.kind === "podman";
 }
 
 function shortIsolationLabel(i: Isolation): string {

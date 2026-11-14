@@ -423,23 +423,25 @@ function ChangeRow({
           className="size-3.5 shrink-0 accent-[var(--accent)]"
         />
       )}
-      <span
-        className={clsx(
-          "w-[12px] shrink-0 text-center font-mono fs-panel-sm font-semibold",
-          kind === "A" || kind === "U" ? "text-added" : kind === "D" ? "text-removed" : "text-warn",
-        )}
-      >
-        {kind}
-      </span>
       <span className="min-w-0 truncate fs-panel">
-        {file.path.slice(slash + 1)}
+        <span className={clsx(kind === "A" || kind === "U" ? "text-added" : kind === "D" && "text-removed")}>
+          {file.path.slice(slash + 1)}
+        </span>
         {slash > 0 && <span className="ml-1.5 text-faint">{file.path.slice(0, slash)}</span>}
       </span>
-      {comments > 0 && (
-        <span className="ml-auto rounded-full bg-accent px-1.5 fs-panel-xs text-accent-fg" title={`${comments} review comments`}>
-          {comments}
-        </span>
-      )}
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {comments > 0 && (
+          <span className="rounded-full bg-accent px-1.5 fs-panel-xs text-accent-fg" title={`${comments} review comments`}>
+            {comments}
+          </span>
+        )}
+        {file.lines && (
+          <span className="flex gap-1 font-mono fs-panel-sm tabular-nums">
+            {file.lines.added > 0 && <span className="text-added">+{file.lines.added}</span>}
+            {file.lines.removed > 0 && <span className="text-removed">−{file.lines.removed}</span>}
+          </span>
+        )}
+      </span>
     </div>
   );
 }

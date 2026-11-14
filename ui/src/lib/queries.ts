@@ -6,6 +6,7 @@ import { useUi } from "./store";
 
 export const keys = {
   projects: ["projects"] as const,
+  keepAwake: ["keepAwake"] as const,
   worktrees: (projectId: string) => ["worktrees", projectId] as const,
   status: (path: string) => ["status", path] as const,
   diff: (worktreePath: string, file: string, base: string | null) => ["diff", worktreePath, file, base] as const,

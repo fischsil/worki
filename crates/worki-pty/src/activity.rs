@@ -21,7 +21,7 @@ pub(crate) enum Signal {
     HookWorking,
     HookWaiting,
     Usage(Vec<ModelUsage>),
-    State(AgentState),
+    State(Box<AgentState>),
     PermissionMode(String),
 }
 
@@ -43,6 +43,22 @@ pub struct AgentState {
     pub version: Option<String>,
     /// Only reported by chat agents that can be continued on claude.ai/code.
     pub remote_control: Option<RemoteControl>,
+    /// Who the agent is signed in as; only chat agents report it.
+    pub account: Option<Account>,
+}
+
+/// The account an agent works under, to tell several subscriptions apart.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub email: Option<String>,
+    /// The subscription, such as `Claude Max` or Codex's `plus`.
+    pub plan: Option<String>,
+    pub organization: Option<String>,
+    /// Signed in with a token rather than a login, which may not tell whose account it is.
+    pub token: bool,
+    /// The name the user gave that token when signing in with it.
+    pub token_name: Option<String>,
 }
 
 /// Remote Control, which continues the session from claude.ai/code or the Claude app.
@@ -186,7 +202,7 @@ impl Scanner {
                     if let Some(usage) = rest.strip_prefix("usage;") {
                         out.push(Signal::Usage(parse_usage(usage)));
                     } else if let Some(state) = rest.strip_prefix("state;") {
-                        out.push(Signal::State(parse_state(state)));
+                        out.push(Signal::State(Box::new(parse_state(state))));
                     } else if let Some(mode) = rest.strip_prefix("mode;") {
                         out.push(Signal::PermissionMode(mode.trim().to_owned()));
                     }
@@ -381,7 +397,7 @@ mod tests {
         assert_eq!(
             out,
             [
-                Signal::State(AgentState {
+                Signal::State(Box::new(AgentState {
                     model: Some("Opus 5.5".into()),
                     effort: Some("high".into()),
                     fast_mode: Some(false),
@@ -393,7 +409,8 @@ mod tests {
                     output_style: Some("default".into()),
                     version: Some("2.1.319".into()),
                     remote_control: None,
-                }),
+                    account: None,
+                })),
                 Signal::PermissionMode("acceptEdits".into()),
             ]
         );

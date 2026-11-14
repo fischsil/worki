@@ -18,7 +18,8 @@ import { Fragment, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, 
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { type DiffLine, diffRows, type GapReveal, parseDiff } from "../lib/diff";
+import { changedWords, type DiffLine, diffRows, type GapReveal, parseDiff, type Range } from "../lib/diff";
+import { highlightDiff, type ThemedToken } from "../lib/highlight";
 import { api, errorMessage } from "../lib/api";
 import { useFileDiff, useSessions } from "../lib/queries";
 import {
@@ -37,6 +38,66 @@ const PINNED = "sticky left-0 w-[100cqw] px-3";
 /** A comment card, starting where the code starts, after the two line number columns. */
 const CARD = "my-1.5 max-w-3xl overflow-hidden rounded-xl border bg-elevated shadow-sm";
 const INSET = "mr-3 ml-[9em]";
+
+const GUTTER = "relative w-[4.5em] px-2 text-right text-faint select-none";
+
+/** Shiki's font style bits. */
+const ITALIC = 1;
+const BOLD = 2;
+
+/** A line's code, colored by its syntax tokens, with the words that changed marked. */
+function Code({
+  text,
+  tokens,
+  changed = [],
+  kind,
+}: {
+  text: string;
+  tokens: ThemedToken[] | undefined;
+  changed?: Range[];
+  kind: CodeLine["kind"];
+}) {
+  const parts: Pick<ThemedToken, "content" | "color" | "fontStyle">[] = tokens ?? [{ content: text }];
+  const mark = kind === "add" ? "bg-diff-added-word" : "bg-diff-removed-word";
+  const pieces: ReactNode[] = [];
+  let pos = 0;
+  for (const t of parts) {
+    const start = pos;
+    const end = (pos += t.content.length);
+    const cuts = [start, ...changed.flat().filter((c) => c > start && c < end), end];
+    for (let k = 0; k < cuts.length - 1; k++) {
+      const [s, e] = [cuts[k], cuts[k + 1]];
+      pieces.push(
+        <span
+          key={s}
+          className={clsx(changed.some(([cs, ce]) => s >= cs && e <= ce) && mark)}
+          style={{
+            color: t.color,
+            fontStyle: t.fontStyle && t.fontStyle & ITALIC ? "italic" : undefined,
+            fontWeight: t.fontStyle && t.fontStyle & BOLD ? 600 : undefined,
+          }}
+        >
+          {t.content.slice(s - start, e - start)}
+        </span>,
+      );
+    }
+  }
+  return pieces;
+}
+
+/** Solid for added lines, striped for removed ones, like an editor's change bar. */
+function EdgeMarker({ kind }: { kind: CodeLine["kind"] }) {
+  if (kind === "context") return null;
+  return (
+    <span
+      aria-hidden
+      className={clsx(
+        "absolute inset-y-0 left-0 w-[3px]",
+        kind === "add" ? "bg-added" : "bg-[repeating-linear-gradient(-45deg,var(--removed)_0_2px,transparent_2px_4px)]",
+      )}
+    />
+  );
+}
 
 const lineLabel = (side: "new" | "old", line: number) => (side === "old" ? `removed line ${line}` : `line ${line}`);
 
@@ -74,6 +135,17 @@ export function DiffView({
     activeId,
   );
   const parsed = useMemo(() => (data !== undefined ? parseDiff(data) : null), [data]);
+  const words = useMemo(() => (parsed ? changedWords(parsed.lines) : new Map<number, Range[]>()), [parsed]);
+  const [tokens, setTokens] = useState<Map<number, ThemedToken[]>>();
+  useEffect(() => {
+    setTokens(undefined);
+    if (!parsed || parsed.binary) return;
+    let current = true;
+    highlightDiff(file, parsed.lines).then((t) => current && setTokens(t));
+    return () => {
+      current = false;
+    };
+  }, [file, parsed]);
   const [revealed, setRevealed] = useState<Record<number, GapReveal>>({});
   const rows = useMemo(() => {
     if (!parsed) return [];
@@ -157,35 +229,31 @@ export function DiffView({
                 return (
                   <Fragment key={i}>
                     <tr
+                      onClick={() => {
+                        if (!window.getSelection()?.toString()) setDrafting(key);
+                      }}
                       className={clsx(
-                        "group",
-                        l.kind === "add" && "bg-added/12",
-                        l.kind === "del" && "bg-removed/12",
+                        "group cursor-pointer",
+                        l.kind === "add" && "bg-diff-added",
+                        l.kind === "del" && "bg-diff-removed",
                       )}
                     >
-                      <td className="w-[4.5em] border-r border-line px-2 text-right text-faint select-none">
+                      <td className={GUTTER}>
+                        <EdgeMarker kind={l.kind} />
                         {l.oldNo ?? ""}
                       </td>
-                      <td className="relative w-[4.5em] border-r border-line px-2 text-right text-faint select-none">
+                      <td className={GUTTER}>
                         <button
                           title="Comment on this line"
-                          onClick={() => setDrafting(key)}
                           className="absolute top-0 -left-1 hidden size-[19px] items-center justify-center rounded bg-accent text-accent-fg group-hover:flex"
                         >
                           <MessageSquarePlus size={11} />
                         </button>
                         {l.newNo ?? ""}
                       </td>
-                      <td className="px-3 whitespace-pre">
-                        <span
-                          className={clsx(
-                            "mr-2 select-none",
-                            l.kind === "add" ? "text-added" : l.kind === "del" ? "text-removed" : "text-faint",
-                          )}
-                        >
-                          {l.kind === "add" ? "+" : l.kind === "del" ? "−" : " "}
-                        </span>
-                        {l.text}
+                      <td className="px-3 whitespace-pre-wrap wrap-anywhere">
+                        {l.kind !== "context" && <span className="sr-only">{l.kind === "add" ? "Added: " : "Removed: "}</span>}
+                        <Code text={l.text} tokens={tokens?.get(i)} changed={words.get(i)} kind={l.kind} />
                       </td>
                     </tr>
                     {here.map((c) => (

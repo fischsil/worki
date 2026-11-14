@@ -134,6 +134,7 @@ impl SessionHost {
             attention: None,
             usage: Vec::new(),
             agent: AgentState::default(),
+            account: None,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)

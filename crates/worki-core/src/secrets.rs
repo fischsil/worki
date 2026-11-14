@@ -5,6 +5,16 @@ use worki_isolation::vault;
 
 use crate::{Error, Result};
 
+/// Identifies a secret's value without keeping it, such as which sign-in token a session got.
+pub fn fingerprint(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .take(16)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 fn key(scope: &str, name: &str) -> String {
     format!("env:{scope}:{name}")
 }

@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { Gauge } from "lucide-react";
+import { Gauge, UserRound } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import type { SessionInfo } from "../lib/api";
+import type { Account, SessionInfo } from "../lib/api";
 import { formatTokens, totalUsage } from "../lib/usage";
 import { CopyContinue, RemoteControl } from "./SessionActions";
 
@@ -40,6 +40,8 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
   if (!a?.model) return null;
   const usage = totalUsage(session.usage);
   const context = a.contextUsed !== null ? Math.round(a.contextUsed) : null;
+  const account = accountOf(session);
+  const accountLabel = account && [accountName(account), account.plan].filter(Boolean).join(" · ");
 
   return (
     <div ref={ref} className="@container relative flex shrink-0 border-b border-line">
@@ -58,6 +60,12 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
         {a.effort && <span className="shrink-0">effort {a.effort}</span>}
         {a.permissionMode && (
           <span className="min-w-0 truncate">{PERMISSION_MODES[a.permissionMode] ?? a.permissionMode}</span>
+        )}
+        {accountLabel && (
+          <span className="flex min-w-0 items-center gap-1 truncate" title={accountLabel}>
+            <UserRound size={11} className="shrink-0" />
+            <span className="truncate">{accountLabel}</span>
+          </span>
         )}
         <span className="flex-1" />
         {usage && <span className="hidden @lg:inline">{formatTokens(usage.tokens)} tokens</span>}
@@ -84,6 +92,9 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
             {usage && <Row label="Tokens">{formatTokens(usage.tokens)}</Row>}
             {a.costUsd !== null && <Row label="Cost">${a.costUsd.toFixed(2)}</Row>}
             {a.outputStyle && a.outputStyle !== "default" && <Row label="Output style">{a.outputStyle}</Row>}
+            {account && accountName(account) && <Row label="Account">{accountName(account)}</Row>}
+            {account?.plan && <Row label="Plan">{account.plan}</Row>}
+            {account?.organization && <Row label="Organization">{account.organization}</Row>}
             {a.version && <Row label="Version">{a.version}</Row>}
           </dl>
           {context !== null && (
@@ -95,6 +106,16 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
       )}
     </div>
   );
+}
+
+/** The agent's own report when it names the account, else what the session's environment said. */
+function accountOf(session: SessionInfo): Account | null {
+  const reported = session.agent.account;
+  return reported?.email ? reported : (session.account ?? reported);
+}
+
+function accountName(account: Account): string | null {
+  return account.email ?? account.organization ?? (account.token ? (account.tokenName ?? "Sign-in token") : null);
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {

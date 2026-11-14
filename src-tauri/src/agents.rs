@@ -22,8 +22,6 @@ pub struct AgentStatus {
     env_path: Option<String>,
     /// Where it resolves for the human user.
     host_path: Option<String>,
-    /// New environments have it from their image, without installing.
-    in_base_image: bool,
     /// The human's own installation can be reused inside.
     can_share: bool,
     auth: Option<AuthStatus>,
@@ -74,7 +72,6 @@ pub async fn agent_statuses(
                 Some(AgentStatus {
                     env_path: env_path(&executable),
                     host_path: host_which(&executable),
-                    in_base_image: isolation.image_ships(&executable),
                     can_share: caps.share_host_install,
                     auth: kit.and_then(|k| k.sign_in).map(|sign_in| AuthStatus {
                         set: secrets::is_set(&scope, sign_in.secret),
@@ -97,16 +94,34 @@ pub async fn share_agent(isolation: Isolation, executable: String) -> CmdResult<
     blocking(move || agents::share_install(isolation.backend().as_ref(), &executable)).await
 }
 
-/// Creates a sign-in token for agents without sharing the human's own login: `claude setup-token`
-/// (the user approves in the browser) bound to their subscription, stored as a secret for
-/// `isolation`. macOS keeps interactive logins only in the Keychain, which agent users lack.
+/// The account in `claude auth status --json` output, or `None` when it isn't signed in.
+pub fn account_from_auth_status(output: &str) -> Option<worki_pty::Account> {
+    let json = output.find('{').map_or(output, |start| &output[start..]);
+    let status: serde_json::Value = serde_json::from_str(json).ok()?;
+    if status["loggedIn"] != true {
+        return None;
+    }
+    let account = worki_pty::chat::account(&status, "subscriptionType", "orgName");
+    Some(worki_pty::Account {
+        token: status["authMethod"] != "claude.ai",
+        ..account.unwrap_or_default()
+    })
+}
+
+/// Creates a sign-in token for agents in `isolation` without sharing the human's own login:
+/// `claude setup-token` (the user approves in the browser) bound to their subscription, stored as
+/// the isolation's secret. Claude Code can't tell whose account a token is, so sessions that sign
+/// in with it show `name` instead. macOS keeps interactive logins only in the Keychain, which agent
+/// users lack.
 #[tauri::command]
 pub async fn sign_in_agent(
     state: State<'_, AppState>,
     isolation: Isolation,
     executable: String,
+    name: Option<String>,
     on_log: Channel<LogLine>,
 ) -> CmdResult<()> {
+    let scope = isolation.scope_key();
     let secret = agents::kit(&executable)
         .and_then(|k| k.sign_in)
         .map(|s| s.secret)
@@ -132,11 +147,9 @@ pub async fn sign_in_agent(
                 let text = String::from_utf8_lossy(bytes);
                 output.push_str(&text);
                 pending.push_str(&agents::strip_ansi(&text));
-                while let Some(i) = pending.find('\n') {
-                    let line: String = pending.drain(..=i).collect();
-                    let line = line.trim();
-                    if !line.is_empty() && !line.contains("sk-ant-") {
-                        log(LogLine::Stdout(line.to_owned()));
+                for line in agents::take_lines(&mut pending) {
+                    if !line.contains("sk-ant-") {
+                        log(LogLine::Stdout(line));
                     }
                 }
             },
@@ -151,11 +164,16 @@ pub async fn sign_in_agent(
     })
     .await?;
 
-    let scope = isolation.scope_key();
     secrets::set(&scope, secret, &value).map_err(err)?;
+    let name = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
     state
         .projects
-        .update_agent_settings(|s| s.add_secret(&scope, secret))
+        .update_agent_settings(|s| {
+            s.add_secret(&scope, secret);
+            if let Some(name) = name {
+                s.token_names.insert(secrets::fingerprint(&value), name);
+            }
+        })
         .map_err(err)
 }
 
@@ -274,5 +292,26 @@ mod tests {
             ))
         );
         assert_eq!(super::device_code("1. Open this link"), None);
+    }
+
+    #[test]
+    fn reads_the_account_from_claude_auth_status() {
+        let login = super::account_from_auth_status(
+            "note: profile loaded\n{\"loggedIn\": true, \"authMethod\": \"claude.ai\", \"email\": \"me@example.com\", \"orgName\": \"Acme\", \"subscriptionType\": \"enterprise\"}",
+        )
+        .unwrap();
+        assert_eq!(login.email.as_deref(), Some("me@example.com"));
+        assert_eq!(login.plan.as_deref(), Some("enterprise"));
+        assert_eq!(login.organization.as_deref(), Some("Acme"));
+        assert!(!login.token);
+
+        let token =
+            super::account_from_auth_status(r#"{"loggedIn": true, "authMethod": "oauth_token"}"#)
+                .unwrap();
+        assert!(token.token && token.email.is_none());
+        assert_eq!(
+            super::account_from_auth_status(r#"{"loggedIn": false}"#),
+            None
+        );
     }
 }

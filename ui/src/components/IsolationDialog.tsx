@@ -3,8 +3,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api, errorMessage, type Isolation, type LocalIsolation } from "../lib/api";
-import { keys, useDoctor, useIsolationSettings } from "../lib/queries";
+import { api, errorMessage, type Isolation, type LocalIsolation, isContainer } from "../lib/api";
+import { keys, useAgentSettings, useDoctor, useIsolationSettings } from "../lib/queries";
 import { AgentsPanel } from "./AgentsPanel";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
@@ -20,6 +20,7 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
   const userExists = isolation.kind === "macUser" && !!checks?.find((c) => c.id === "user")?.ok;
   const [removing, setRemoving] = useState(false);
   const { data: settings } = useIsolationSettings();
+  const { data: agentSettings } = useAgentSettings();
   const stopOnQuit = settings?.stopOnQuit ?? false;
 
 
@@ -87,7 +88,13 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
       {valid ? (
         <>
           <DoctorPanel isolation={isolation} projectId={null} />
-          {ready && <AgentsPanel isolation={isolation} />}
+          {ready && isolation.kind === "macUser" && <AgentsPanel isolation={isolation} />}
+          {ready && isContainer(isolation) && agentSettings?.accounts.length === 0 && (
+            <p className="text-xs leading-relaxed text-faint">
+              Agents are installed in a worktree's environment the first time they start there. Claude Code signs in
+              with an account: add one under Agents.
+            </p>
+          )}
         </>
       ) : (
         <ErrorText>Use letters, digits, “_”, “.” or “-” (max 31 characters).</ErrorText>

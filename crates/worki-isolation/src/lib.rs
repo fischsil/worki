@@ -17,7 +17,8 @@ use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 
 pub use container::{
-    sandbox_name, Container, Engine, DEFAULT_CONTAINER_IMAGE, DEFAULT_SANDBOX_IMAGE,
+    account_launch, sandbox_name, AccountRun, Container, Engine, DEFAULT_CONTAINER_IMAGE,
+    SANDBOX_KIT,
 };
 pub use mac_user::{MacUser, AGENT_GROUP, DEFAULT_AGENT_USER};
 pub use none::{host_which, NoIsolation};
@@ -32,10 +33,10 @@ pub enum Isolation {
     None,
     #[serde(alias = "user")]
     MacUser { user: String },
-    /// A Docker Sandbox (`sbx`) per worktree for a built-in agent (`image`), optionally created
-    /// from a saved template instead of the agent's default image.
+    /// A Docker Sandbox (`sbx`) per worktree with sbx's `shell` kit, agents installed on first
+    /// use, optionally created from a saved template. Earlier versions chose an agent kit
+    /// (`image`), which is ignored now.
     DockerSandbox {
-        image: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         template: Option<String>,
     },
@@ -69,7 +70,6 @@ pub enum ProjectIsolation {
         user: String,
     },
     DockerSandbox {
-        image: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         template: Option<String>,
     },
@@ -87,8 +87,7 @@ impl ProjectIsolation {
             Self::Inherit => global.clone(),
             Self::None => Isolation::None,
             Self::MacUser { user } => Isolation::MacUser { user: user.clone() },
-            Self::DockerSandbox { image, template } => Isolation::DockerSandbox {
-                image: image.clone(),
+            Self::DockerSandbox { template } => Isolation::DockerSandbox {
                 template: template.clone(),
             },
             Self::Docker { image } => Isolation::Docker {
@@ -108,7 +107,8 @@ impl Isolation {
         !matches!(self, Self::None | Self::Ssh { .. })
     }
 
-    /// Each worktree gets its own container or sandbox, which a snapshot can be saved from.
+    /// Each worktree gets its own container or sandbox, which a snapshot can be saved from and
+    /// which can share a Claude Code account's folder.
     pub fn is_container(&self) -> bool {
         matches!(
             self,
@@ -116,14 +116,11 @@ impl Isolation {
         )
     }
 
-    /// The image environments are built from already contains `executable`.
-    pub fn image_ships(&self, executable: &str) -> bool {
+    /// Lets Claude Code's Remote Control connect in this isolation; only Docker Sandboxes block it.
+    pub fn allow_remote_control(&self) -> anyhow::Result<()> {
         match self {
-            Self::DockerSandbox { image, .. } => container::image_ships(true, image, executable),
-            Self::Docker { image } | Self::Podman { image } => {
-                container::image_ships(false, image, executable)
-            }
-            _ => false,
+            Self::DockerSandbox { .. } => container::allow_sbx_remote_control(),
+            _ => Ok(()),
         }
     }
 
@@ -131,9 +128,9 @@ impl Isolation {
         match self {
             Self::None => Box::new(NoIsolation),
             Self::MacUser { user } => Box::new(MacUser::new(user.clone())),
-            Self::DockerSandbox { image, template } => {
-                Box::new(Container::new(Engine::Sbx, image.clone()).with_template(template.clone()))
-            }
+            Self::DockerSandbox { template } => Box::new(
+                Container::new(Engine::Sbx, SANDBOX_KIT.into()).with_template(template.clone()),
+            ),
             Self::Docker { image } => Box::new(Container::new(Engine::Docker, image.clone())),
             Self::Podman { image } => Box::new(Container::new(Engine::Podman, image.clone())),
             Self::Ssh { keep_alive, .. } => {
@@ -155,17 +152,8 @@ impl Isolation {
                 anyhow::ensure!(valid, "invalid user name: {user}");
                 Ok(())
             }
-            Self::DockerSandbox { image, template } => {
-                let valid = !image.is_empty()
-                    && image.len() <= 40
-                    && image
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
-                anyhow::ensure!(valid, "invalid sandbox image: {image}");
-                if let Some(template) = template {
-                    validate_image_ref(template)?;
-                }
-                Ok(())
+            Self::DockerSandbox { template } => {
+                template.as_deref().map_or(Ok(()), validate_image_ref)
             }
             Self::Docker { image } | Self::Podman { image } => validate_image_ref(image),
             Self::Ssh { .. } => self.ssh_target().unwrap_or_default().validate(),
@@ -301,6 +289,11 @@ pub struct Workspace {
     pub repo: PathBuf,
     pub worktree_root: PathBuf,
     pub worktree: Option<PathBuf>,
+    /// A Claude Code account's folder the environment shares (containers and sandboxes only).
+    pub account_dir: Option<PathBuf>,
+    /// Replace an existing environment made for another account. Only when nothing runs in it,
+    /// since replacing it stops what does.
+    pub replace_outdated: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -628,20 +621,12 @@ mod tests {
     fn sandbox_template_is_optional_and_validated() {
         let old: Isolation =
             serde_json::from_str(r#"{"kind":"dockerSandbox","image":"claude"}"#).unwrap();
-        assert_eq!(
-            old,
-            Isolation::DockerSandbox {
-                image: "claude".into(),
-                template: None
-            }
-        );
+        assert_eq!(old, Isolation::DockerSandbox { template: None });
         let saved = Isolation::DockerSandbox {
-            image: "claude".into(),
             template: Some("worki-app:20261109-1200".into()),
         };
         assert!(saved.validate().is_ok());
         assert!(Isolation::DockerSandbox {
-            image: "claude".into(),
             template: Some("--privileged".into()),
         }
         .validate()

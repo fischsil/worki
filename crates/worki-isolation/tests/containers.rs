@@ -89,6 +89,8 @@ fn lifecycle(isolation: Isolation) {
         repo: repo.clone(),
         worktree_root: root.clone(),
         worktree: Some(wt.clone()),
+        account_dir: None,
+        replace_outdated: false,
     };
     backend.grant_access(&ws).expect("environment created");
     backend.grant_access(&ws).expect("second grant is a no-op");
@@ -221,6 +223,8 @@ fn main_checkout(isolation: Isolation) {
         repo: repo.clone(),
         worktree_root: tmp.path().to_path_buf(),
         worktree: Some(repo.clone()),
+        account_dir: None,
+        replace_outdated: false,
     };
     backend.grant_access(&ws).expect("environment created");
     let run_in = |command: &str| {
@@ -268,10 +272,7 @@ fn docker_main_checkout() {
 #[test]
 #[ignore = "needs Docker Sandboxes (sbx)"]
 fn sbx_main_checkout() {
-    main_checkout(Isolation::DockerSandbox {
-        image: "shell".into(),
-        template: None,
-    });
+    main_checkout(Isolation::DockerSandbox { template: None });
 }
 
 fn pull(engine: &str) {
@@ -285,10 +286,7 @@ fn pull(engine: &str) {
 #[test]
 #[ignore = "needs Docker Sandboxes (sbx)"]
 fn sbx_lifecycle() {
-    lifecycle(Isolation::DockerSandbox {
-        image: "shell".into(),
-        template: None,
-    });
+    lifecycle(Isolation::DockerSandbox { template: None });
 }
 
 #[test]
@@ -332,4 +330,70 @@ fn podman_network_check() {
     network_check(Isolation::Podman {
         image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
     });
+}
+
+/// An environment made for one account is kept while something may run in it, and replaced with
+/// one for the project's new account otherwise.
+fn account_switch(isolation: Isolation) {
+    let home = std::env::var("HOME").unwrap();
+    let base = Path::new(&home).join("worki");
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix(".e2e-")
+        .tempdir_in(&base)
+        .unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let (first, second) = (root.join("account a"), root.join("account b"));
+
+    let backend = isolation.backend();
+    backend.ready().expect("engine available and running");
+    let ws = |account: &Path, replace_outdated| Workspace {
+        repo: repo.clone(),
+        worktree_root: root.clone(),
+        worktree: Some(repo.clone()),
+        account_dir: Some(account.to_path_buf()),
+        replace_outdated,
+    };
+    let config_dir = || {
+        let (ok, out) = run(backend
+            .launch(&LaunchRequest {
+                cwd: repo.clone(),
+                command: Some(r#"printf %s "$CLAUDE_CONFIG_DIR""#.into()),
+                interactive: false,
+                stdin: false,
+                env: vec![],
+                session: None,
+            })
+            .unwrap());
+        assert!(ok, "{out}");
+        out.lines().last().unwrap_or_default().to_owned()
+    };
+
+    backend.grant_access(&ws(&first, true)).expect("created");
+    assert_eq!(config_dir(), first.display().to_string());
+    backend.grant_access(&ws(&second, false)).expect("kept");
+    assert_eq!(config_dir(), first.display().to_string());
+    backend.grant_access(&ws(&second, true)).expect("replaced");
+    assert_eq!(config_dir(), second.display().to_string());
+    assert!(second.exists());
+
+    backend.release(&ws(&second, false)).expect("removed");
+}
+
+#[test]
+#[ignore = "needs Docker Desktop running"]
+fn docker_account_switch() {
+    pull("docker");
+    account_switch(Isolation::Docker {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Docker Sandboxes (sbx)"]
+fn sbx_account_switch() {
+    account_switch(Isolation::DockerSandbox { template: None });
 }

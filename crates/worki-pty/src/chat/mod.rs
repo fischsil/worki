@@ -321,6 +321,28 @@ pub trait ChatProtocol: Send {
     }
 }
 
+/// The account an agent reports as JSON with an `email` and the given plan and organization
+/// keys, or `None` when it names none of them (signed in with an API key).
+pub fn account(
+    value: &serde_json::Value,
+    plan: &str,
+    organization: &str,
+) -> Option<crate::Account> {
+    let text = |key: &str| {
+        value[key]
+            .as_str()
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    let account = crate::Account {
+        email: text("email"),
+        plan: text(plan),
+        organization: text(organization),
+        ..crate::Account::default()
+    };
+    (account != crate::Account::default()).then_some(account)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

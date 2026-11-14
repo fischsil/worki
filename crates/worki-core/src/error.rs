@@ -6,6 +6,8 @@ pub enum Error {
     NotARepo(PathBuf),
     #[error("project not found: {0}")]
     ProjectNotFound(String),
+    #[error("account not found: {0}")]
+    AccountNotFound(String),
     #[error("saved SSH host not found: {0}")]
     SshHostNotFound(String),
     #[error("project already added: {0}")]

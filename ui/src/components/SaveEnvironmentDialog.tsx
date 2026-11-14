@@ -2,11 +2,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Check, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 
-import { api, type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { api, isContainer, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { keys, useSessions, useWorktrees } from "../lib/queries";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { Button, Checkbox, Dialog, ErrorText, Field, Input, WarnText } from "./ui";
-import { isContainer, useEffectiveIsolation } from "./WorktreeIsolation";
+import { useEffectiveIsolation } from "./WorktreeIsolation";
 
 export function SaveEnvironmentDialog({
   project,

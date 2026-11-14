@@ -31,6 +31,7 @@ enum Asked {
     Initialize,
     Thread,
     Models,
+    Account,
     Turn,
     Other,
 }
@@ -177,7 +178,7 @@ impl CodexProtocol {
                 Asked::Thread => vec![ChatEvent::Notice {
                     text: format!("Codex couldn't start the conversation: {error}"),
                 }],
-                Asked::Initialize | Asked::Models | Asked::Other => Vec::new(),
+                Asked::Initialize | Asked::Models | Asked::Account | Asked::Other => Vec::new(),
             };
         }
         match kind {
@@ -224,6 +225,14 @@ impl CodexProtocol {
                     self.replies.push(line);
                 }
                 events
+            }
+            Asked::Account => {
+                let account = &result["account"];
+                self.state.account = (account["type"] == "chatgpt")
+                    .then(|| super::account(account, "planType", "workspaceName"))
+                    .flatten();
+                self.changed = true;
+                Vec::new()
             }
             Asked::Models => {
                 let models: Vec<ModelChoice> = result["data"]
@@ -543,7 +552,8 @@ impl ChatProtocol for CodexProtocol {
             None => self.thread_start(),
         };
         let models = self.request(Asked::Models, "model/list", json!({}));
-        vec![initialize, initialized, thread, models]
+        let account = self.request(Asked::Account, "account/read", json!({}));
+        vec![initialize, initialized, thread, models, account]
     }
 
     fn message(&mut self, id: &str, text: &str, attachments: &[Attachment]) -> Vec<String> {
@@ -888,6 +898,19 @@ mod tests {
         p.take_replies();
         p.take_state();
         p
+    }
+
+    #[test]
+    fn reads_the_signed_in_account() {
+        let mut p = protocol();
+        let start = sent(&p.start());
+        assert_eq!(start[4]["method"], "account/read");
+        parse_all(&mut p, TURN);
+        p.parse(r#"{"id": 4, "result": {"account": {"type": "chatgpt", "email": "me@example.com", "planType": "plus", "workspaceName": null}, "requiresOpenaiAuth": true}}"#);
+        let account = p.take_state().unwrap().agent.unwrap().account.unwrap();
+        assert_eq!(account.email.as_deref(), Some("me@example.com"));
+        assert_eq!(account.plan.as_deref(), Some("plus"));
+        assert_eq!(account.organization, None);
     }
 
     #[test]

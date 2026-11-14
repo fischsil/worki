@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { CircleCheck, CircleX, KeyRound, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
+import { CircleCheck, CircleX, KeyRound, LoaderCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -12,24 +12,28 @@ import {
   scopeKey,
 } from "../lib/api";
 import { keys, useAgentStatuses, useRefreshSecrets } from "../lib/queries";
+import { SignInDialog } from "./SignInDialog";
 import { Button, ErrorText, IconButton, LogView } from "./ui";
 
 type Action = "share" | "token" | "removeToken";
 
-/** Per-agent setup inside an isolated environment: reuse your installation, sign in. */
-export function AgentsPanel({ isolation }: { isolation: Isolation }) {
+type AgentsIsolation = Extract<Isolation, { kind: "macUser" } | { kind: "ssh" }>;
+
+/**
+ * Per-agent setup for User Isolation and SSH: reuse your installation, sign in. Containers and
+ * sandboxes need none: agents are installed on first use and Claude Code signs in with an account.
+ */
+export function AgentsPanel({ isolation }: { isolation: AgentsIsolation }) {
   const qc = useQueryClient();
   const { data: agents, isFetching, error, refetch } = useAgentStatuses(isolation);
   const [running, setRunning] = useState<{ exe: string; action: Action } | null>(null);
   const [result, setResult] = useState<{ exe: string; lines: LogLine[]; error?: string } | null>(null);
+  const [signingIn, setSigningIn] = useState<AgentStatus | null>(null);
   const refreshSecrets = useRefreshSecrets();
-  const sandbox = isolation.kind === "dockerSandbox" || isolation.kind === "docker" || isolation.kind === "podman";
-  const envNoun = isolation.kind === "dockerSandbox" ? "sandbox" : "container";
-  const envNouns = isolation.kind === "dockerSandbox" ? "sandboxes" : "containers";
-  const user = isolation.kind === "macUser" ? isolation.user : isolation.kind === "ssh" ? isolation.host : "the sandbox";
+  const user = isolation.kind === "macUser" ? isolation.user : isolation.host;
   const where = isolation.kind === "ssh" ? `on ${isolation.host}` : `for ${user}`;
 
-  async function run(agent: AgentStatus, action: Action) {
+  async function run(agent: AgentStatus, action: Action, tokenName = "") {
     const exe = agent.executable;
     setRunning({ exe, action });
     const lines: LogLine[] = [];
@@ -41,7 +45,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
     try {
       if (action === "share") push({ stream: "info", line: `Linked ${await api.shareAgent(isolation, exe)}` });
       if (action === "token" && agent.auth) {
-        await api.signInAgent(isolation, exe, push);
+        await api.signInAgent(isolation, exe, tokenName, push);
         push({ stream: "info", line: `Saved ${agent.auth.secret} in your Keychain for agents running as ${user}.` });
         await refreshSecrets();
       }
@@ -58,13 +62,11 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
     }
   }
 
-  if (isolation.kind === "none") return null;
-
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-line bg-panel p-2">
       <div className="flex items-center justify-between px-1 pb-1">
         <span className="text-[11px] font-semibold tracking-wide text-faint uppercase">
-          {sandbox ? `Agents in ${envNouns}` : `Agents ${where}`}
+          Agents {where}
         </span>
         <IconButton label="Refresh" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw size={12} className={clsx(isFetching && "animate-spin")} />
@@ -79,7 +81,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
             <Button
               key={action}
               variant={primary ? "primary" : "secondary"}
-              onClick={() => run(a, action)}
+              onClick={() => (action === "token" ? setSigningIn(a) : run(a, action))}
               disabled={running !== null}
             >
               {busy === action && <LoaderCircle size={12} className="animate-spin" />}
@@ -104,14 +106,6 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
                 <div className="selectable truncate font-mono text-[11px] text-faint">
                   {a.envPath ?? (a.hostPath ? `Yours: ${a.hostPath}` : `Not installed for you either`)}
                 </div>
-                {sandbox && (
-                  <div className="mt-0.5 flex items-center gap-1 text-[11px] text-faint">
-                    <Sparkles size={11} className={a.inBaseImage ? "text-added" : ""} />
-                    {a.inBaseImage
-                      ? "Part of the base image"
-                      : `Installed in a worktree's ${envNoun} the first time you start it there`}
-                  </div>
-                )}
                 {a.auth && (
                   <div className="mt-0.5 flex items-center gap-1 text-[11px] text-faint">
                     <KeyRound size={11} className={a.auth.set ? "text-added" : ""} />
@@ -131,17 +125,14 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
           </div>
         );
       })}
-      {sandbox && (
-        <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
-          An agent is installed in a worktree's {envNoun} the first time you start it there, or a new {envNoun} gets it
-          from a snapshot of one that has it.
-        </p>
-      )}
       <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
         Sign in runs <span className="font-mono">claude setup-token</span> as you and approves in your browser. The
         token uses your subscription and is passed to {user}'s sessions; your own login stays untouched. Codex
         signs in per environment with a code you approve in the browser the first time it starts there.
       </p>
+      {signingIn && (
+        <SignInDialog onSignIn={(name) => run(signingIn, "token", name)} onClose={() => setSigningIn(null)} />
+      )}
     </div>
   );
 }

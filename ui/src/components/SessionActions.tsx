@@ -67,7 +67,7 @@ function ChatRemote({ session, remote }: { session: SessionInfo; remote: NonNull
           aria-label="Remote Control"
           title={
             reconnecting
-              ? "Remote Control lost its connection and is reconnecting. In Docker Sandboxes it only connects with: sbx settings set claude.remoteControl true"
+              ? "Remote Control lost its connection and is reconnecting."
               : copied
                 ? "Link copied"
                 : `Remote Control is on: ${url}`

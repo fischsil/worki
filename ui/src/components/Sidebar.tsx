@@ -25,6 +25,7 @@ import { api, errorMessage, type Project, type PullRequest, type Worktree, workt
 import { identityOf, isAgent, useJustChanged, usePlayful } from "../lib/playful";
 import { useWorktreeComments } from "../lib/review";
 import { keys, useAddProject, useProjects, usePullRequest, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
+import { useKeepAwake } from "../lib/awake";
 import { useUi } from "../lib/store";
 import { plural } from "../lib/text";
 import { toast } from "../lib/toast";
@@ -367,13 +368,12 @@ function UpdateButton() {
 }
 
 function KeepAwakeButton() {
-  const on = useUi((s) => s.keepAwake);
-  const setOn = useUi((s) => s.setKeepAwake);
+  const [on, setOn] = useKeepAwake();
   return (
     <button
       onClick={() => setOn(!on)}
       aria-pressed={on}
-      title={on ? "Keeping the Mac awake while agents work. Click to allow sleep." : "Keep the Mac awake while agents work"}
+      title={on ? "Keeping the Mac awake while agents run. Click to allow sleep." : "Keep the Mac awake while agents run"}
       className={clsx(
         "flex size-7 items-center justify-center rounded-md hover:bg-hover",
         on ? "text-accent" : "text-faint hover:text-fg",

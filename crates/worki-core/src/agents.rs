@@ -147,6 +147,21 @@ pub fn trust_worktree(backend: &dyn Backend, executable: &str, worktree: &Path) 
     }
 }
 
+/// Answers Claude Code's trust question for `worktree` in an account's folder, whose
+/// `.claude.json` Claude Code reads instead of `~/.claude.json` there.
+pub fn trust_in_account(dir: &Path, worktree: &Path) -> Result<()> {
+    let Some(trust) = kit("claude").and_then(|k| k.trust.as_ref()) else {
+        return Ok(());
+    };
+    let file = dir.join(trust.file);
+    let current = std::fs::read_to_string(&file).unwrap_or_default();
+    if let Some(trusted) = (trust.apply)(&current, worktree)? {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(&file, trusted)?;
+    }
+    Ok(())
+}
+
 /// `~/.claude.json` with `worktree`'s trust question answered, or `None` when it already is.
 fn trusted_claude_json(current: &str, worktree: &Path) -> Result<Option<String>> {
     let mut json: Value = serde_json::from_str(current)
@@ -188,6 +203,20 @@ pub fn find_claude_token(output: &str) -> Option<String> {
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .collect();
     (token.len() > 20).then_some(token)
+}
+
+/// Takes the finished lines out of terminal output collected in `pending`, trimmed, without
+/// empty ones.
+pub fn take_lines(pending: &mut String) -> Vec<String> {
+    let mut lines = Vec::new();
+    while let Some(i) = pending.find(['\n', '\r']) {
+        let line: String = pending.drain(..=i).collect();
+        let line = line.trim();
+        if !line.is_empty() {
+            lines.push(line.to_owned());
+        }
+    }
+    lines
 }
 
 pub fn strip_ansi(s: &str) -> String {

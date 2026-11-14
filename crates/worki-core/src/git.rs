@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::host::Host;
 use crate::model::{
-    BaseUpdate, BranchChanges, ChangedFile, CommitDraft, CommitInfo, Worktree, WorktreeStatus,
+    BaseUpdate, BranchChanges, ChangedFile, CommitDraft, CommitInfo, LineCounts, Worktree,
+    WorktreeStatus,
 };
 use crate::prompt::Part;
 use crate::{Error, Result};
@@ -287,8 +288,8 @@ pub async fn status(host: &Host, worktree: &Path) -> Result<WorktreeStatus> {
         .await?;
     let mut status = parse_status_v2(&porcelain);
     drop_sandbox_placeholders(host, worktree, &mut status.changed_files);
-    if let Ok(stat) = host.git(worktree, ["diff", "HEAD", "--shortstat"]).await {
-        (status.insertions, status.deletions) = parse_shortstat(&stat);
+    if let Ok(totals) = count_lines(host, worktree, "HEAD", &mut status.changed_files).await {
+        (status.insertions, status.deletions) = totals;
     }
     Ok(status)
 }
@@ -315,6 +316,7 @@ pub fn parse_status_v2(text: &str) -> WorktreeStatus {
             status.changed_files.push(ChangedFile {
                 path: path.into(),
                 code: code.replace('.', " "),
+                ..ChangedFile::default()
             })
         };
         if let Some(header) = entry.strip_prefix("# ") {
@@ -604,11 +606,11 @@ pub async fn branch_changes(host: &Host, worktree: &Path, base: &str) -> Result<
             .map(|p| ChangedFile {
                 path: p.into(),
                 code: "??".into(),
+                ..ChangedFile::default()
             }),
     );
     drop_sandbox_placeholders(host, worktree, &mut files);
-    let stat = host.git(worktree, ["diff", &from, "--shortstat"]).await?;
-    let (insertions, deletions) = parse_shortstat(&stat);
+    let (insertions, deletions) = count_lines(host, worktree, &from, &mut files).await?;
     let commits = host
         .git(worktree, ["rev-list", "--count", &format!("{from}..HEAD")])
         .await?
@@ -758,6 +760,96 @@ pub async fn update_from_base(host: &Host, worktree: &Path, base: &str) -> Resul
     Ok(BaseUpdate::Conflicts { files })
 }
 
+/// Fills in each file's added and removed lines and returns the totals of tracked files (what
+/// `git diff --shortstat` reports). New files are only counted on this machine.
+async fn count_lines(
+    host: &Host,
+    worktree: &Path,
+    from: &str,
+    files: &mut [ChangedFile],
+) -> Result<(u32, u32)> {
+    let counts = parse_numstat(
+        &host
+            .git(
+                worktree,
+                ["diff", from, "--numstat", "-z", "-M", "--no-ext-diff"],
+            )
+            .await?,
+    );
+    let totals = counts
+        .values()
+        .flatten()
+        .fold((0, 0), |(a, r), c| (a + c.added, r + c.removed));
+    let untracked: Vec<PathBuf> = files
+        .iter()
+        .filter(|f| f.code == "??" && matches!(host, Host::Local))
+        .map(|f| worktree.join(&f.path))
+        .collect();
+    let mut new_lines = tokio::task::spawn_blocking(move || {
+        untracked
+            .iter()
+            .map(|p| untracked_lines(p))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default()
+    .into_iter();
+    for file in files {
+        file.lines = if file.code != "??" {
+            counts.get(&file.path).copied().flatten()
+        } else if matches!(host, Host::Local) {
+            new_lines.next().flatten()
+        } else {
+            None
+        };
+    }
+    Ok(totals)
+}
+
+/// Lines in a new file, or `None` for binary or very large files.
+fn untracked_lines(path: &Path) -> Option<LineCounts> {
+    const MAX_BYTES: u64 = 4 << 20;
+    if std::fs::metadata(path).ok()?.len() > MAX_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.contains(&0) {
+        return None;
+    }
+    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
+    let unterminated = bytes.last().is_some_and(|&b| b != b'\n');
+    Some(LineCounts {
+        added: (newlines + usize::from(unterminated)) as u32,
+        removed: 0,
+    })
+}
+
+/// `git diff --numstat -z` output by path (the new path for renames); `None` for binary files.
+pub fn parse_numstat(text: &str) -> HashMap<String, Option<LineCounts>> {
+    let mut counts = HashMap::new();
+    let mut tokens = text.split('\0');
+    while let Some(entry) = tokens.next() {
+        let mut fields = entry.splitn(3, '\t');
+        let (Some(added), Some(removed), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let path = if path.is_empty() {
+            tokens.next();
+            tokens.next().unwrap_or_default()
+        } else {
+            path
+        };
+        let lines = added.parse().ok().zip(removed.parse().ok());
+        counts.insert(
+            path.to_owned(),
+            lines.map(|(added, removed)| LineCounts { added, removed }),
+        );
+    }
+    counts
+}
+
 /// `git diff --name-status -z` output; renames and copies report the new path.
 pub fn parse_name_status(text: &str) -> Vec<ChangedFile> {
     let mut files = Vec::new();
@@ -771,29 +863,11 @@ pub fn parse_name_status(text: &str) -> Vec<ChangedFile> {
             files.push(ChangedFile {
                 path: path.into(),
                 code: format!("{letter} "),
+                ..ChangedFile::default()
             });
         }
     }
     files
-}
-
-pub fn parse_shortstat(text: &str) -> (u32, u32) {
-    let mut ins = 0;
-    let mut del = 0;
-    for part in text.split(',') {
-        let part = part.trim();
-        let n = part
-            .split(' ')
-            .next()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(0);
-        if part.contains("insertion") {
-            ins = n;
-        } else if part.contains("deletion") {
-            del = n;
-        }
-    }
-    (ins, del)
 }
 
 #[cfg(test)]
@@ -884,6 +958,7 @@ mod tests {
         let changed = |path: &str, code: &str| super::ChangedFile {
             path: path.into(),
             code: code.into(),
+            ..Default::default()
         };
         let mut files = vec![
             changed(".bashrc", "??"),
@@ -921,12 +996,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_shortstat() {
-        assert_eq!(
-            parse_shortstat(" 3 files changed, 10 insertions(+), 2 deletions(-)\n"),
-            (10, 2)
-        );
-        assert_eq!(parse_shortstat(" 1 file changed, 1 deletion(-)\n"), (0, 1));
-        assert_eq!(parse_shortstat(""), (0, 0));
+    fn parses_numstat_with_renames_and_binaries() {
+        let counts = super::parse_numstat(concat!(
+            "3\t1\tsrc/a.rs\0",
+            "-\t-\tlogo.png\0",
+            "2\t0\t\0old.rs\0new.rs\0",
+        ));
+        let lines = |added, removed| Some(super::LineCounts { added, removed });
+        assert_eq!(counts["src/a.rs"], lines(3, 1));
+        assert_eq!(counts["logo.png"], None);
+        assert_eq!(counts["new.rs"], lines(2, 0));
+        assert!(!counts.contains_key("old.rs"));
     }
 }

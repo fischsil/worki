@@ -4,6 +4,7 @@ import { type ReactNode, useState } from "react";
 
 import { api, errorMessage } from "../lib/api";
 import { keys, useIsolationSettings } from "../lib/queries";
+import { useKeepAwake } from "../lib/awake";
 import { useUi } from "../lib/store";
 import { checkForUpdates, useUpdates } from "../lib/updates";
 import { Button, Checkbox, ErrorText } from "./ui";
@@ -15,8 +16,7 @@ export function GeneralSettings() {
   const updates = useUpdates();
   const reopen = useUi((s) => s.reopenSessions);
   const setReopen = useUi((s) => s.setReopenSessions);
-  const keepAwake = useUi((s) => s.keepAwake);
-  const setKeepAwake = useUi((s) => s.setKeepAwake);
+  const [keepAwake, setKeepAwake] = useKeepAwake();
   const { data: isolation } = useIsolationSettings();
   const [error, setError] = useState<string | null>(null);
 
@@ -37,10 +37,10 @@ export function GeneralSettings() {
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
         <Group title="Power">
           <Checkbox checked={keepAwake} onChange={setKeepAwake}>
-            <span className="text-[13px]">Keep the Mac awake while agents work</span>
+            <span className="text-[13px]">Keep the Mac awake while agents run</span>
             <span className="block text-xs text-faint">
-              The Mac doesn't go to sleep while an agent is working, so long tasks finish when you step away. The
-              display can still turn off, and closing the lid still sleeps. The cup next to Settings toggles it too.
+              While an agent session is open. The display can still turn off; closing the lid still sleeps. The cup
+              next to Settings toggles it too.
             </span>
           </Checkbox>
         </Group>

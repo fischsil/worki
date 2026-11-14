@@ -1,3 +1,4 @@
+mod accounts;
 mod agents;
 mod awake;
 mod commands;
@@ -18,6 +19,7 @@ use worki_pty::{SessionHost, SessionInfo};
 pub struct AppState {
     pub projects: Arc<ProjectService>,
     pub sessions: Arc<SessionHost>,
+    pub awake: Arc<awake::KeepAwake>,
     pub app: tauri::AppHandle,
 }
 
@@ -102,13 +104,21 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let projects = ProjectService::open_default()?;
+            let awake = Arc::new(awake::KeepAwake::new(
+                projects.keep_awake().unwrap_or(false),
+            ));
             let handle = app.handle().clone();
+            let on_change = awake.clone();
             let sessions = SessionHost::new(Arc::new(move |info: &SessionInfo| {
+                on_change.session_changed(info);
                 handle.emit("session-changed", info).ok();
             }));
+            app.manage(accounts::Logins::default());
+            app.manage(sessions::AccountChecks::default());
             app.manage(AppState {
                 projects: Arc::new(projects),
                 sessions: Arc::new(sessions),
+                awake,
                 app: app.handle().clone(),
             });
 
@@ -160,6 +170,7 @@ pub fn run() {
             commands::save_agent_profiles,
             commands::set_remote_control,
             awake::keep_awake,
+            awake::set_keep_awake,
             commands::set_claude_settings,
             commands::host_claude_settings,
             commands::default_claude_settings,
@@ -171,6 +182,14 @@ pub fn run() {
             isolation::isolation_build_image,
             isolation::worktree_isolation,
             isolation::set_worktree_isolation,
+            accounts::add_claude_account,
+            accounts::remove_claude_account,
+            accounts::set_default_account,
+            accounts::log_in_claude_account,
+            accounts::enter_login_code,
+            accounts::cancel_login,
+            accounts::check_claude_account,
+            accounts::set_project_account,
             agents::agent_statuses,
             agents::share_agent,
             agents::sign_in_agent,

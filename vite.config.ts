@@ -2,8 +2,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: "ui",
+  // The demo server runs beside `tauri dev`; sharing one dependency cache breaks the other's.
+  cacheDir: mode === "demo" ? "../node_modules/.vite-demo" : "../node_modules/.vite",
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   server: {
@@ -16,4 +18,4 @@ export default defineConfig({
     emptyOutDir: true,
     target: "safari16",
   },
-});
+}));

@@ -159,6 +159,8 @@ impl ClaudeProtocol {
                 if let Some(mode) = answer["current_permission_mode"].as_str() {
                     self.state.permission_mode = Some(mode.into());
                 }
+                self.state.account =
+                    super::account(&answer["account"], "subscriptionType", "organization");
                 self.report_remote();
                 vec![
                     ChatEvent::Options {
@@ -752,6 +754,29 @@ mod tests {
 
     fn parse_all(p: &mut ClaudeProtocol, lines: &[&str]) -> Vec<ChatEvent> {
         lines.iter().flat_map(|l| p.parse(l)).collect()
+    }
+
+    #[test]
+    fn reads_the_account_from_initialize() {
+        let mut p = ClaudeProtocol::new("s");
+        let start: Value = serde_json::from_str(&p.start()[0]).unwrap();
+        let init = start["request_id"].clone();
+        p.parse(
+            &json!({
+                "type": "control_response",
+                "response": { "subtype": "success", "request_id": init, "response": { "account": {
+                    "email": "me@example.com",
+                    "organization": "Acme",
+                    "subscriptionType": "Claude Max",
+                    "apiProvider": "firstParty",
+                }}},
+            })
+            .to_string(),
+        );
+        let account = p.take_state().unwrap().agent.unwrap().account.unwrap();
+        assert_eq!(account.email.as_deref(), Some("me@example.com"));
+        assert_eq!(account.plan.as_deref(), Some("Claude Max"));
+        assert_eq!(account.organization.as_deref(), Some("Acme"));
     }
 
     #[test]

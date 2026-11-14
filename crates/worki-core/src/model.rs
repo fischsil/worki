@@ -177,10 +177,7 @@ impl SnapshotEngine {
     /// An isolation on this engine, to reach its snapshots.
     pub fn isolation(self) -> Isolation {
         match self {
-            Self::DockerSandbox => Isolation::DockerSandbox {
-                image: worki_isolation::DEFAULT_SANDBOX_IMAGE.into(),
-                template: None,
-            },
+            Self::DockerSandbox => Isolation::DockerSandbox { template: None },
             Self::Docker => Isolation::Docker {
                 image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
             },
@@ -194,9 +191,9 @@ impl SnapshotEngine {
     pub fn snapshot_of(isolation: &Isolation) -> Option<(Self, String)> {
         let custom = |image: &str| image != worki_isolation::DEFAULT_CONTAINER_IMAGE;
         match isolation {
-            Isolation::DockerSandbox {
-                template: Some(t), ..
-            } => Some((Self::DockerSandbox, t.clone())),
+            Isolation::DockerSandbox { template: Some(t) } => {
+                Some((Self::DockerSandbox, t.clone()))
+            }
             Isolation::Docker { image } if custom(image) => Some((Self::Docker, image.clone())),
             Isolation::Podman { image } if custom(image) => Some((Self::Podman, image.clone())),
             _ => None,
@@ -277,12 +274,21 @@ pub struct PrComment {
     pub body: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangedFile {
     pub path: String,
     /// Two-letter porcelain v1 code, e.g. " M", "??", "A ".
     pub code: String,
+    /// Lines added and removed; `None` for binary files or when they couldn't be counted.
+    #[serde(default)]
+    pub lines: Option<LineCounts>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineCounts {
+    pub added: u32,
+    pub removed: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +371,32 @@ pub struct AgentSettings {
     /// environment's own (`--settings`).
     #[serde(default = "default_claude_settings")]
     pub claude_settings: JsonObject,
+    /// Names the user gave sign-in tokens, by the token's fingerprint (`secrets::fingerprint`),
+    /// shown when a session signs in with one, since Claude Code can't tell whose account it is.
+    #[serde(default)]
+    pub token_names: BTreeMap<String, String>,
+    /// Claude Code logins of worki's own, each in its folder (`paths::account_dir`).
+    #[serde(default)]
+    pub accounts: Vec<ClaudeAccount>,
+    /// The account a project's agents use, by project id, where it isn't the default account.
+    #[serde(default)]
+    pub project_accounts: BTreeMap<String, String>,
+    #[serde(default)]
+    pub default_account: Option<String>,
+}
+
+/// A Claude Code login projects can pick. Who it signs in as is read from the folder with
+/// `claude auth status` after signing in; it has no email until then.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeAccount {
+    pub id: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub organization: Option<String>,
 }
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;
@@ -416,6 +448,10 @@ impl Default for AgentSettings {
             secrets: BTreeMap::new(),
             remote_control: false,
             claude_settings: default_claude_settings(),
+            token_names: BTreeMap::new(),
+            accounts: Vec::new(),
+            project_accounts: BTreeMap::new(),
+            default_account: None,
         }
     }
 }

@@ -641,10 +641,7 @@ mod tests {
             format!("sudo -u '_worki' -H /bin/zsh -lc {}", shell_quote(in_dir))
         );
         let sbx = continue_command(
-            &Isolation::DockerSandbox {
-                image: "claude".into(),
-                template: None,
-            },
+            &Isolation::DockerSandbox { template: None },
             wt,
             ChatAgent::Claude,
             "abc",

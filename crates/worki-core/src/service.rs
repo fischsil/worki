@@ -22,6 +22,7 @@ const SAVED_SESSIONS_KEY: &str = "agentSessions";
 /// Per-worktree isolation choices, keyed by worktree path.
 const WORKTREE_ISOLATION_KEY: &str = "worktreeIsolation";
 const SNAPSHOTS_KEY: &str = "snapshots";
+const KEEP_AWAKE_KEY: &str = "keepAwake";
 
 type WorktreeChoices = BTreeMap<String, ProjectIsolation>;
 
@@ -174,18 +175,44 @@ impl ProjectService {
     /// removed and the cleanup is skipped with a warning.
     pub async fn remove_project(&self, id: &str) -> Result<Option<String>> {
         let project = self.store.get_project(id)?;
-        let global = self.isolation_settings()?.default;
-        let in_project = |path: &str| project.contains(Path::new(path));
+        let isolations = self.project_isolations(&project)?;
+        let warnings = self.forget_environments(&project, isolations).await?;
         let mut choices = self.worktree_choices()?;
-        let mut isolations = vec![self.isolation_for(&project)?];
-        let worktree_isolations = choices
-            .iter()
-            .filter(|(path, choice)| **choice != ProjectIsolation::Inherit && in_project(path))
+        choices.retain(|path, _| !project.contains(Path::new(path)));
+        self.save_worktree_choices(&choices)?;
+        self.update_agent_settings(|s| {
+            s.project_accounts.remove(id);
+        })?;
+        self.store.delete_project(id)?;
+        Ok((!warnings.is_empty()).then(|| warnings.join("\n")))
+    }
+
+    /// The isolations the project's worktrees use: the project's own and worktree choices.
+    fn project_isolations(&self, project: &Project) -> Result<Vec<Isolation>> {
+        let global = self.isolation_settings()?.default;
+        let mut isolations = vec![self.isolation_for(project)?];
+        let worktree_isolations = self
+            .worktree_choices()?
+            .into_iter()
+            .filter(|(path, choice)| {
+                *choice != ProjectIsolation::Inherit && project.contains(Path::new(path))
+            })
             .map(|(_, choice)| choice.resolve(&global));
         push_unique(&mut isolations, worktree_isolations);
+        isolations.retain(|i| *i != Isolation::None);
+        Ok(isolations)
+    }
+
+    /// Removes the project's environments in `isolations`. Isolations that can't be reached are
+    /// skipped, with a warning each.
+    async fn forget_environments(
+        &self,
+        project: &Project,
+        isolations: Vec<Isolation>,
+    ) -> Result<Vec<String>> {
         let mut warnings = Vec::new();
-        for isolation in isolations.into_iter().filter(|i| *i != Isolation::None) {
-            let ws = Self::workspace(&project, None);
+        for isolation in isolations {
+            let ws = Self::workspace(project, None);
             let label = isolation.label();
             let skipped = blocking(move || {
                 let backend = isolation.backend();
@@ -197,10 +224,109 @@ impl ProjectService {
             .await?;
             warnings.extend(skipped);
         }
-        choices.retain(|path, _| !in_project(path));
-        self.save_worktree_choices(&choices)?;
-        self.store.delete_project(id)?;
-        Ok((!warnings.is_empty()).then(|| warnings.join("\n")))
+        Ok(warnings)
+    }
+
+    /// A new account, to sign in next; the first one becomes the default.
+    pub fn add_account(&self) -> Result<ClaudeAccount> {
+        let account = ClaudeAccount {
+            id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
+            ..ClaudeAccount::default()
+        };
+        self.update_agent_settings(|s| {
+            s.accounts.push(account.clone());
+            s.default_account.get_or_insert_with(|| account.id.clone());
+        })?;
+        Ok(account)
+    }
+
+    pub fn account(&self, id: &str) -> Result<ClaudeAccount> {
+        self.agent_settings()?
+            .accounts
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or_else(|| Error::AccountNotFound(id.into()))
+    }
+
+    /// Saves who the account signs in as.
+    pub fn save_account(&self, account: &ClaudeAccount) -> Result<()> {
+        self.update_agent_settings(|s| {
+            if let Some(saved) = s.accounts.iter_mut().find(|a| a.id == account.id) {
+                *saved = account.clone();
+            }
+        })
+    }
+
+    /// Removes the account and its login. Projects that used it fall back to the default
+    /// account (another one, when it was the default), and their environments are removed so
+    /// none keeps the deleted login mounted.
+    pub async fn remove_account(&self, id: &str) -> Result<Vec<String>> {
+        let mut users = Vec::new();
+        for project in self.list_projects()? {
+            if self.project_account(&project.id)?.as_deref() == Some(id) {
+                users.push(project);
+            }
+        }
+        self.update_agent_settings(|s| {
+            s.accounts.retain(|a| a.id != id);
+            s.project_accounts.retain(|_, account| account != id);
+            if s.default_account.as_deref() == Some(id) {
+                s.default_account = s.accounts.first().map(|a| a.id.clone());
+            }
+        })?;
+        let dir = crate::paths::account_dir(id);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        let mut warnings = Vec::new();
+        for project in &users {
+            let mut isolations = self.project_isolations(project)?;
+            isolations.retain(Isolation::is_container);
+            warnings.extend(self.forget_environments(project, isolations).await?);
+        }
+        Ok(warnings)
+    }
+
+    pub fn set_default_account(&self, id: &str) -> Result<()> {
+        self.account(id)?;
+        self.update_agent_settings(|s| s.default_account = Some(id.to_owned()))
+    }
+
+    /// The account the project's agents use: its own choice, else the default account.
+    pub fn project_account(&self, project_id: &str) -> Result<Option<String>> {
+        let mut settings = self.agent_settings()?;
+        Ok(settings
+            .project_accounts
+            .remove(project_id)
+            .or(settings.default_account))
+    }
+
+    /// Picks the account the project's agents use (`None`: the default account). The account
+    /// folder is mounted when an environment is created, so each worktree's environment is
+    /// replaced at a session start when nothing runs in it (see [`Self::grant_access_with`]).
+    pub fn set_project_account(&self, project_id: &str, account: Option<String>) -> Result<()> {
+        self.update_agent_settings(|s| match account {
+            Some(id) => {
+                s.project_accounts.insert(project_id.to_owned(), id);
+            }
+            None => {
+                s.project_accounts.remove(project_id);
+            }
+        })
+    }
+
+    /// The folder of the account sessions in `isolation` use for `project`, if it has one there.
+    pub fn account_dir(
+        &self,
+        project: &Project,
+        isolation: &Isolation,
+    ) -> Result<Option<std::path::PathBuf>> {
+        if !isolation.is_container() {
+            return Ok(None);
+        }
+        Ok(self
+            .project_account(&project.id)?
+            .map(|id| crate::paths::account_dir(&id)))
     }
 
     pub fn reorder_projects(&self, ids: &[String]) -> Result<()> {
@@ -441,6 +567,15 @@ impl ProjectService {
         Ok(remote)
     }
 
+    /// Keep the Mac awake while agent sessions are open.
+    pub fn keep_awake(&self) -> Result<bool> {
+        self.setting(KEEP_AWAKE_KEY)
+    }
+
+    pub fn set_keep_awake(&self, on: bool) -> Result<()> {
+        self.store.set_setting(KEEP_AWAKE_KEY, &on)
+    }
+
     pub fn isolation_settings(&self) -> Result<IsolationSettings> {
         self.setting(ISOLATION_SETTINGS_KEY)
     }
@@ -522,9 +657,7 @@ impl ProjectService {
             return Ok(project);
         }
         let isolation = match saved {
-            Isolation::DockerSandbox { image, template } => {
-                ProjectIsolation::DockerSandbox { image, template }
-            }
+            Isolation::DockerSandbox { template } => ProjectIsolation::DockerSandbox { template },
             Isolation::Docker { image } => ProjectIsolation::Docker { image },
             Isolation::Podman { image } => ProjectIsolation::Podman { image },
             other => {
@@ -714,6 +847,8 @@ impl ProjectService {
             repo: project.repo_path.clone(),
             worktree_root: project.worktree_root.clone(),
             worktree: worktree.map(Path::to_path_buf),
+            account_dir: None,
+            replace_outdated: false,
         }
     }
 
@@ -724,13 +859,31 @@ impl ProjectService {
         project: &Project,
         worktree: Option<&Path>,
     ) -> Result<Isolation> {
+        self.grant_access_with(project, worktree, false).await
+    }
+
+    /// [`Self::grant_access`], also replacing the worktree's environment when it was made for
+    /// another account than the project's: only when nothing runs in it.
+    pub async fn grant_access_with(
+        &self,
+        project: &Project,
+        worktree: Option<&Path>,
+        replace_outdated: bool,
+    ) -> Result<Isolation> {
         let isolation = match worktree {
             Some(w) => self.isolation_for_worktree(project, w)?,
             None => self.isolation_for(project)?,
         };
         if isolation != Isolation::None {
             let backend = isolation.backend();
-            let ws = Self::workspace(project, worktree);
+            let account_dir = self.account_dir(project, &isolation)?;
+            let ws = Workspace {
+                // Without an account there are none to switch between: removing the last
+                // one already removed the environments that used it.
+                replace_outdated: replace_outdated && account_dir.is_some(),
+                account_dir,
+                ..Self::workspace(project, worktree)
+            };
             blocking(move || backend.grant_access(&ws)).await?;
         }
         Ok(isolation)

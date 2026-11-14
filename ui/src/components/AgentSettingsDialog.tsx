@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, MessageSquare, Pencil, Plus, SlidersHorizontal, SquareTerminal, Star, Trash2 } from "lucide-react";
+import { Bot, MessageSquare, Pencil, Plus, SlidersHorizontal, SquareTerminal, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
@@ -13,9 +13,10 @@ import {
 } from "../lib/api";
 import { keys } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { ClaudeAccounts } from "./ClaudeAccounts";
 import { ClaudeSettingsDialog } from "./ClaudeSettingsDialog";
 import { Group } from "./GeneralSettings";
-import { Button, Checkbox, Dialog, ErrorText, Field, IconButton, Input, NestedDialog } from "./ui";
+import { Button, Checkbox, DefaultMark, Dialog, ErrorText, Field, IconButton, Input, NestedDialog } from "./ui";
 
 const BUILT_IN = ["claude", "codex"];
 
@@ -61,10 +62,9 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
             <CommandField agent={claude} placeholder="claude --model opus" onChange={setCommand(claude)} />
             <Yolo agent={claude} onChange={setCommand(claude)} />
             <Checkbox checked={settings.remoteControl} onChange={setRemoteControl}>
-              <span className="text-[13px]">Remote Control</span>
+              <span className="text-[13px]">Remote Control for every session</span>
               <span className="block text-xs leading-relaxed text-faint">
-                Continue sessions from claude.ai/code or the Claude app. Docker Sandboxes also need{" "}
-                <span className="font-mono">sbx settings set claude.remoteControl true</span>.
+                Starts all Claude Code sessions with it. For one chat only, turn it on below its message box.
               </span>
             </Checkbox>
             <div className="flex flex-col gap-1.5">
@@ -84,6 +84,10 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
             <Yolo agent={codex} onChange={setCommand(codex)} />
           </AgentBox>
         )}
+      </Group>
+
+      <Group title="Claude Code accounts">
+        <ClaudeAccounts accounts={settings.accounts} defaultId={settings.defaultAccount} />
       </Group>
 
       <Group title="Other agents">
@@ -225,23 +229,6 @@ function AgentBox({
       </div>
       {children}
     </div>
-  );
-}
-
-function DefaultMark({ isDefault, onMakeDefault }: { isDefault: boolean; onMakeDefault: () => void }) {
-  if (isDefault) {
-    return (
-      <span className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-accent/15 px-2 text-[11px] font-medium text-accent">
-        <Star size={11} className="fill-current" />
-        Default · ⌘T
-      </span>
-    );
-  }
-  return (
-    <Button variant="ghost" onClick={onMakeDefault} className="h-6 shrink-0 px-2 text-[11px]">
-      <Star size={11} />
-      Make default
-    </Button>
   );
 }
 

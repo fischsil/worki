@@ -4,6 +4,8 @@ import clsx from "clsx";
 import {
   ArrowUpFromLine,
   Bot,
+  ChevronDown,
+  ChevronRight,
   CircleCheck,
   CircleDot,
   CircleX,
@@ -43,7 +45,7 @@ import { reviewTarget, sendReview, useReview } from "../lib/review";
 import { useUi } from "../lib/store";
 import { plural } from "../lib/text";
 import { toast } from "../lib/toast";
-import { Button, Checkbox, Dialog, ErrorText, Field, Input, Textarea } from "./ui";
+import { Button, Checkbox, Dialog, ErrorText, Field, IconButton, Input, Textarea } from "./ui";
 
 /** Where agent tasks go: the worktree's open agent (the newest running agent if the open tab
  * isn't one), else a new tab with the default agent. Texts worki fills in itself are written in
@@ -374,13 +376,25 @@ function CommitRows({ commits }: { commits: CommitInfo[] }) {
 /** The branch's own commits since it left its base. */
 export function BranchCommits({ worktreePath, base }: { worktreePath: string; base: string }) {
   const { data: commits = [] } = useBranchLog(worktreePath, base);
+  const open = useUi((s) => s.commitListOpen);
+  const setOpen = useUi((s) => s.setCommitListOpen);
   return (
-    <Section title={`Commits${commits.length ? ` (${commits.length})` : ""}`} scroll className="max-h-[30%]">
-      {commits.length === 0 ? (
-        <p className="fs-panel text-faint">None yet. Commit your work in the Changes tab.</p>
-      ) : (
-        <CommitRows commits={commits} />
-      )}
+    <Section
+      title={`Commits${commits.length ? ` (${commits.length})` : ""}`}
+      aside={
+        <IconButton label={open ? "Hide commits" : "Show commits"} onClick={() => setOpen(!open)} className="-my-1">
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </IconButton>
+      }
+      scroll={open}
+      className={clsx(open && "max-h-[30%]")}
+    >
+      {open &&
+        (commits.length === 0 ? (
+          <p className="fs-panel text-faint">None yet. Commit your work in the Changes tab.</p>
+        ) : (
+          <CommitRows commits={commits} />
+        ))}
     </Section>
   );
 }

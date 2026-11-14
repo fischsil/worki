@@ -13,6 +13,8 @@ const DEFAULT_CLAUDE_SETTINGS = {
   },
 };
 
+let keepAwake = false;
+
 let agentSettings = {
   profiles: [
     { id: "claude", name: "Claude Code", command: "claude", install: null },
@@ -22,7 +24,14 @@ let agentSettings = {
   secrets: {},
   remoteControl: false,
   claudeSettings: DEFAULT_CLAUDE_SETTINGS,
+  accounts: [
+    { id: "work", email: "dev@acme.com", plan: "max", organization: "Acme" },
+    { id: "side", email: "me@example.com", plan: "pro", organization: null },
+  ] as { id: string; email: string | null; plan: string | null; organization: string | null }[],
+  projectAccounts: { "acme-web": "side" } as Record<string, string>,
+  defaultAccount: "work" as string | null,
 };
+let finishLogin: (() => void) | null = null;
 
 const projects = [
   project("acme-web", "/Users/dev/src/acme-web"),
@@ -64,10 +73,18 @@ const login = worktrees["acme-web"][2].path;
 const refunds = worktrees["payments-api"][1].path;
 const staging = worktrees.infra[1].path;
 
-const file = (path: string, code: string) => ({ path, code });
+const file = (path: string, code: string, added = 0, removed = 0) => ({
+  path,
+  code,
+  lines: { added, removed },
+});
 const status: Record<string, unknown> = {
   [checkout]: {
-    changedFiles: [file("src/checkout/Summary.tsx", " M"), file("src/checkout/summary.css", "??"), file("src/checkout/Summary.test.tsx", " M")],
+    changedFiles: [
+      file("src/checkout/Summary.tsx", " M", 12, 5),
+      file("src/checkout/summary.css", "??", 38),
+      file("src/checkout/Summary.test.tsx", " M", 24, 2),
+    ],
     insertions: 61,
     deletions: 9,
     ahead: 2,
@@ -90,7 +107,7 @@ const started = Date.now();
 /** In the playful scene, whether its timeline has reached `ms`; other scenes are always past it. */
 const playfulAt = (ms: number) => scene !== "playful" || Date.now() - started >= ms;
 
-const isolation = { kind: "dockerSandbox", image: "claude", template: "worki-acme-web:20261109-1430" };
+const isolation = { kind: "dockerSandbox", template: "worki-acme-web:20261109-1430" };
 
 const session = (id: string, path: string, activity: string, extra: object = {}) => ({
   id,
@@ -122,7 +139,7 @@ const session = (id: string, path: string, activity: string, extra: object = {})
 });
 
 const sessions = [
-  session("s1", checkout, "working"),
+  session("s1", checkout, "working", { account: { email: null, plan: null, organization: null, token: true, tokenName: "work account" } }),
   session("s2", login, "waiting", { attention: "Claude needs your permission to use Bash" }),
   session("s3", refunds, "working"),
   session("s4", staging, "waiting", { attention: "Which region should the staging cluster use?" }),
@@ -138,6 +155,7 @@ const sessions = [
       contextSize: 200_000,
       costUsd: 1.84,
       version: "2.1.319",
+      account: { email: "dev@acme.com", plan: "Claude Max", organization: "Acme", token: false, tokenName: null },
       remoteControl:
         scene === "hero" || scene === "chat"
           ? { state: "connected", url: "https://claude.ai/code/session_demo" }
@@ -367,6 +385,51 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     case "set_claude_settings":
       agentSettings = { ...agentSettings, claudeSettings: args.settings };
       return null;
+    case "add_claude_account": {
+      const account = { id: crypto.randomUUID(), email: null, plan: null, organization: null };
+      agentSettings = { ...agentSettings, accounts: [...agentSettings.accounts, account] };
+      return account;
+    }
+    case "set_default_account":
+      agentSettings = { ...agentSettings, defaultAccount: args.id };
+      return null;
+    case "remove_claude_account":
+      agentSettings = { ...agentSettings, accounts: agentSettings.accounts.filter((a) => a.id !== args.id) };
+      return null;
+    case "log_in_claude_account":
+      setTimeout(
+        () => args.onEvent.onmessage?.({ kind: "url", url: "https://claude.ai/oauth/authorize?code=true" }),
+        800,
+      );
+      return new Promise((resolve) => {
+        finishLogin = () => {
+          const signedIn = { email: "new@example.com", plan: "max", organization: null };
+          agentSettings = {
+            ...agentSettings,
+            accounts: agentSettings.accounts.map((a) => (a.id === args.id ? { ...a, ...signedIn } : a)),
+          };
+          resolve(agentSettings.accounts.find((a) => a.id === args.id));
+        };
+      });
+    case "enter_login_code":
+      setTimeout(() => finishLogin?.(), 1000);
+      return null;
+    case "cancel_login":
+      return null;
+    case "check_claude_account":
+      return agentSettings.accounts.find((a) => a.id === args.id);
+    case "set_project_account": {
+      const projectAccounts = { ...agentSettings.projectAccounts };
+      if (args.accountId) projectAccounts[args.projectId] = args.accountId;
+      else delete projectAccounts[args.projectId];
+      agentSettings = { ...agentSettings, projectAccounts };
+      return null;
+    }
+    case "keep_awake":
+      return keepAwake;
+    case "set_keep_awake":
+      keepAwake = args.on;
+      return null;
     case "default_claude_settings":
       return DEFAULT_CLAUDE_SETTINGS;
     case "host_claude_settings":
@@ -389,7 +452,12 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     case "branch_changes":
       return {
         base: args.base,
-        files: [file("src/checkout/Summary.tsx", "M "), file("src/checkout/LineItem.tsx", "M "), file("src/checkout/summary.css", "A "), file("src/checkout/Summary.test.tsx", "M ")],
+        files: [
+          file("src/checkout/Summary.tsx", "M ", 12, 5),
+          file("src/checkout/LineItem.tsx", "M ", 41, 17),
+          file("src/checkout/summary.css", "A ", 38),
+          file("src/checkout/Summary.test.tsx", "M ", 51, 15),
+        ],
         insertions: 142,
         deletions: 37,
         commits: 3,
@@ -466,8 +534,8 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       ];
     case "agent_statuses":
       return [
-        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, inBaseImage: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true } },
-        { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canShare: false, inBaseImage: false, auth: null },
+        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true } },
+        { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canShare: false, auth: null },
       ];
     case "secret_status":
       return (args.names as string[]).map((n) => [n, true]);

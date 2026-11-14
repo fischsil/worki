@@ -4,12 +4,12 @@ pub mod chat;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub use activity::{Activity, AgentState, ModelUsage, RemoteControl};
+pub use activity::{Account, Activity, AgentState, ModelUsage, RemoteControl};
 use activity::{Scanner, Signal, Tracker};
 use anyhow::{anyhow, Context, Result};
 use chat::Chat;
@@ -81,6 +81,8 @@ pub struct SessionInfo {
     pub usage: Vec<ModelUsage>,
     /// Model, effort, context and the like, as the agent last reported them.
     pub agent: AgentState,
+    /// Who the session's environment is signed in as, checked when it started.
+    pub account: Option<Account>,
     pub created_at: u64,
 }
 
@@ -177,6 +179,7 @@ impl SessionHost {
             attention: None,
             usage: Vec::new(),
             agent: AgentState::default(),
+            account: None,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -269,6 +272,17 @@ impl SessionHost {
         let session = self.get(id)?;
         lock(&session.tracker).dismiss();
         refresh(&session, &self.on_change);
+        Ok(())
+    }
+
+    pub fn set_account(&self, id: &str, account: Option<Account>) -> Result<()> {
+        let session = self.get(id)?;
+        let info = {
+            let mut info = lock(&session.info);
+            info.account = account;
+            info.clone()
+        };
+        (self.on_change)(&info);
         Ok(())
     }
 
@@ -372,7 +386,7 @@ fn pump_output(mut reader: Box<dyn Read + Send>, session: &Session, on_change: &
                             let mode = info.agent.permission_mode.take();
                             info.agent = AgentState {
                                 permission_mode: mode,
-                                ..s.clone()
+                                ..(**s).clone()
                             };
                         }
                         Signal::PermissionMode(m) => info.agent.permission_mode = Some(m.clone()),
@@ -437,24 +451,88 @@ pub fn run_captured(
     cwd: &Path,
     cols: u16,
     timeout: Duration,
+    on_output: impl FnMut(&[u8]),
+) -> Result<Option<u32>> {
+    let spec = Captured {
+        program,
+        args,
+        env: &[],
+        cwd,
+        cols,
+        timeout,
+    };
+    run_interactive(spec, None, on_output)
+}
+
+/// What [`run_interactive`] runs.
+pub struct Captured<'a> {
+    pub program: &'a str,
+    pub args: &'a [String],
+    pub env: &'a [(String, String)],
+    pub cwd: &'a Path,
+    pub cols: u16,
+    pub timeout: Duration,
+}
+
+/// Typed into a [`run_interactive`] program, or ends it.
+pub enum PtyInput {
+    Text(String),
+    Kill,
+}
+
+/// [`run_captured`], also typing what `input` sends; [`PtyInput::Kill`] ends the program like the
+/// timeout does. Without `input` the terminal's input stays open but unused, as some programs
+/// quit at its end.
+pub fn run_interactive(
+    spec: Captured,
+    input: Option<mpsc::Receiver<PtyInput>>,
     mut on_output: impl FnMut(&[u8]),
 ) -> Result<Option<u32>> {
     let pair = native_pty_system().openpty(PtySize {
         rows: 50,
-        cols,
+        cols: spec.cols,
         pixel_width: 0,
         pixel_height: 0,
     })?;
-    let mut cmd = CommandBuilder::new(program);
-    cmd.args(args);
-    cmd.cwd(cwd);
+    let mut cmd = CommandBuilder::new(spec.program);
+    cmd.args(spec.args);
+    cmd.cwd(spec.cwd);
     cmd.env("TERM", "xterm-256color");
+    for (key, value) in spec.env {
+        cmd.env(key, value);
+    }
     let mut child = pair
         .slave
         .spawn_command(cmd)
-        .with_context(|| format!("spawn {program}"))?;
+        .with_context(|| format!("spawn {}", spec.program))?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader()?;
+    let killed = Arc::new(AtomicBool::new(false));
+    if let Some(input) = input {
+        let mut writer = pair.master.take_writer()?;
+        let mut killer = child.clone_killer();
+        let kill_flag = killed.clone();
+        std::thread::spawn(move || {
+            while let Ok(message) = input.recv() {
+                match message {
+                    PtyInput::Text(text) => {
+                        if writer
+                            .write_all(text.as_bytes())
+                            .and_then(|_| writer.flush())
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    PtyInput::Kill => {
+                        kill_flag.store(true, Ordering::SeqCst);
+                        killer.kill().ok();
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
@@ -466,7 +544,7 @@ pub fn run_captured(
         }
     });
 
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + spec.timeout;
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(left) {
@@ -479,7 +557,8 @@ pub fn run_captured(
             }
         }
     }
-    Ok(Some(child.wait()?.exit_code()))
+    let code = child.wait()?.exit_code();
+    Ok((!killed.load(Ordering::SeqCst)).then_some(code))
 }
 
 /// Appends to the ring buffer; when trimming, cuts at the next newline so replay doesn't start

@@ -6,6 +6,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,9 @@ use crate::{
     LaunchRequest, Workspace, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
 };
 
-pub const DEFAULT_SANDBOX_IMAGE: &str = "claude";
+/// sbx's kit for every sandbox: agents are installed on first use, not taken from sbx's agent
+/// kits, whose proxy signs Claude Code in with sbx's own login over the account's.
+pub const SANDBOX_KIT: &str = "shell";
 /// Built locally by "Set up" for Docker and Podman.
 pub const DEFAULT_CONTAINER_IMAGE: &str = "worki-agent:1";
 const AGENT_CONTAINERFILE: &str = include_str!("worki-agent.Containerfile");
@@ -279,7 +282,25 @@ impl Container {
             .collect())
     }
 
-    fn create(&self, name: &str, worktree: &Path, mounts: &[Mount]) -> Result<()> {
+    /// `account_dir` is mounted and set as Claude Code's config folder for everything that runs
+    /// inside.
+    fn create(
+        &self,
+        name: &str,
+        worktree: &Path,
+        mounts: &[Mount],
+        account_dir: Option<&Path>,
+    ) -> Result<()> {
+        let mut mounts = mounts.to_vec();
+        let mut env = None;
+        if let Some(dir) = account_dir {
+            std::fs::create_dir_all(dir)?;
+            mounts.push(Mount {
+                path: dir.to_owned(),
+                read_only: false,
+            });
+            env = Some(format!("CLAUDE_CONFIG_DIR={}", dir.display()));
+        }
         let mut args: Vec<String> = Vec::new();
         match self.engine {
             Engine::Sbx => {
@@ -295,6 +316,9 @@ impl Container {
                     ]),
                     None => args.extend(["--pull", "missing"].map(String::from)),
                 }
+                if let Some(env) = env {
+                    args.extend(["--env".into(), env]);
+                }
                 args.push(self.image.clone());
                 args.extend(mounts.iter().map(Mount::sbx_arg));
             }
@@ -304,8 +328,11 @@ impl Container {
                     "--label".into(),
                     format!("worki.workdir={}", worktree.display()),
                 ]);
-                for m in mounts {
+                for m in &mounts {
                     args.extend(["-v".into(), m.volume_arg()]);
+                }
+                if let Some(env) = env {
+                    args.extend(["-e".into(), env]);
                 }
                 args.extend([
                     "-w".into(),
@@ -368,6 +395,20 @@ impl Container {
         feed(&mut input)?;
         drop(input);
         Ok(child.wait_with_output()?)
+    }
+
+    /// The account folder the bound environment was created with: `Some(None)` for none, `None`
+    /// when it can't be told.
+    fn account_dir(&self) -> Option<Option<PathBuf>> {
+        const MARK: &str = "worki-account-dir:";
+        let script = format!(r#"bash -lc 'printf "\n{MARK}%s\n" "$CLAUDE_CONFIG_DIR"'"#);
+        let out = self
+            .sh(&script, &[], None)
+            .ok()
+            .filter(|o| o.status.success())?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let dir = stdout.lines().find_map(|l| l.strip_prefix(MARK))?;
+        Some((!dir.is_empty()).then(|| PathBuf::from(dir)))
     }
 
     /// Times a TLS connection to Anthropic's API from a throwaway container of the image.
@@ -516,10 +557,39 @@ fn already_exists(error: &anyhow::Error) -> bool {
     text.contains("already exists") || text.contains("is already in use")
 }
 
+/// Lets Claude Code's Remote Control connect from Docker Sandboxes, which sbx blocks until its
+/// `claude.remoteControl` setting is on. The setting covers every sandbox, so it's checked once
+/// per run of worki.
+pub fn allow_sbx_remote_control() -> Result<()> {
+    static ALLOWED: AtomicBool = AtomicBool::new(false);
+    if ALLOWED.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let sbx = Container::new(Engine::Sbx, SANDBOX_KIT.into());
+    let current = sbx.checked(
+        ["--no-input", "settings", "get", "claude.remoteControl"],
+        "reading sbx's Remote Control setting",
+    )?;
+    if current.trim() != "true" {
+        sbx.checked(
+            [
+                "--no-input",
+                "settings",
+                "set",
+                "claude.remoteControl",
+                "true",
+            ],
+            "allowing Remote Control in sbx",
+        )?;
+    }
+    ALLOWED.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
 /// What worki runs sbx with, as `(subcommand, flags it passes)`. The doctor checks the
 /// installed sbx still offers each, since sbx changes its command line between releases.
 const SBX_USES: &[(&[&str], &[&str])] = &[
-    (&["create"], &["--name", "--pull", "--template"]),
+    (&["create"], &["--name", "--pull", "--template", "--env"]),
     (&["exec"], &["--interactive", "--tty", "--workdir", "--env"]),
     (&["ls"], &["--json"]),
     (&["rm"], &["--force"]),
@@ -529,6 +599,8 @@ const SBX_USES: &[(&[&str], &[&str])] = &[
     (&["template", "save"], &[]),
     (&["policy", "ls"], &[]),
     (&["policy", "init"], &[]),
+    (&["settings", "get"], &[]),
+    (&["settings", "set"], &[]),
 ];
 
 /// The flags of `uses` that `help` (a subcommand's `--help` output) doesn't mention.
@@ -691,14 +763,12 @@ fn main_checkout_mounts(repo: &Path) -> Vec<Mount> {
     .collect()
 }
 
-/// Docker Sandboxes' images are named after the agent they contain; worki's own image has Claude
-/// Code.
-pub(crate) fn image_ships(sandbox: bool, image: &str, command: &str) -> bool {
-    if sandbox {
-        image == command
-    } else {
-        image == DEFAULT_CONTAINER_IMAGE && command == "claude"
-    }
+/// Images sbx keeps for itself in its template list: kits assembled onto a base or snapshot (a
+/// cache), and Docker's base images.
+fn sbx_internal(tag: &str) -> bool {
+    ["sandbox-kit-assembled:", "docker/sandbox-templates:"]
+        .iter()
+        .any(|repo| tag.starts_with(repo))
 }
 
 /// `docker.io/library/app:1` and `localhost/app:1` are the same image as `app:1`.
@@ -854,6 +924,73 @@ fn admin_dir(worktree: &Path) -> Option<PathBuf> {
     Some(worktree.join(dir))
 }
 
+/// A throwaway container of worki's image with a Claude Code account's folder mounted as its
+/// config folder: to sign the account in and check it. It needs Linux, since Claude Code on macOS
+/// keeps its login in the Keychain instead of the folder. Removed when dropped, as a program run
+/// with a terminal (`-t`) keeps its container going after the engine's CLI was killed.
+pub struct AccountRun {
+    pub launch: Launch,
+    engine: Container,
+    name: String,
+}
+
+/// Runs `command` in an [`AccountRun`] for `dir`, with Docker, else Podman.
+pub fn account_launch(dir: &Path, command: &str, interactive: bool) -> Result<AccountRun> {
+    static RUNS: AtomicU64 = AtomicU64::new(0);
+    let engine = [Engine::Docker, Engine::Podman]
+        .into_iter()
+        .map(|engine| Container::new(engine, DEFAULT_CONTAINER_IMAGE.into()))
+        .find(|c| c.engine.binary().is_ok() && c.engine_running() && c.image_present())
+        .context("accounts sign in with Docker or Podman: open Isolation and set one up")?;
+    std::fs::create_dir_all(dir)?;
+    let name = format!(
+        "worki_account-{}-{}",
+        std::process::id(),
+        RUNS.fetch_add(1, Ordering::SeqCst)
+    );
+    let volume = Mount {
+        path: dir.to_owned(),
+        read_only: false,
+    }
+    .volume_arg();
+    let mut args: Vec<String> = ["run", "--rm", if interactive { "-it" } else { "-i" }]
+        .map(String::from)
+        .into();
+    args.extend([
+        "--name".into(),
+        name.clone(),
+        "-v".into(),
+        volume,
+        "-e".into(),
+        "CLAUDE_CONFIG_DIR".into(),
+        DEFAULT_CONTAINER_IMAGE.into(),
+        "bash".into(),
+        "-lc".into(),
+        command.into(),
+    ]);
+    let launch = Launch {
+        program: engine.engine.binary()?.display().to_string(),
+        args,
+        env: vec![("CLAUDE_CONFIG_DIR".into(), dir.display().to_string())],
+        clear_env: false,
+        cwd: std::env::temp_dir(),
+    };
+    Ok(AccountRun {
+        launch,
+        engine,
+        name,
+    })
+}
+
+impl Drop for AccountRun {
+    fn drop(&mut self) {
+        let name = std::slice::from_ref(&self.name);
+        self.engine
+            .remove_all(name, "removing the account container")
+            .ok();
+    }
+}
+
 /// `exec` arguments (the same for sbx, docker and podman). Values of `env` stay in the CLI's own
 /// environment (`-e KEY`), so they never show up in `ps`.
 fn exec_args(name: &str, req: &LaunchRequest) -> Vec<String> {
@@ -883,7 +1020,6 @@ impl Backend for Container {
     fn isolation(&self) -> Isolation {
         match self.engine {
             Engine::Sbx => Isolation::DockerSandbox {
-                image: self.image.clone(),
                 template: self.template.clone(),
             },
             Engine::Docker => Isolation::Docker {
@@ -924,7 +1060,19 @@ impl Backend for Container {
         };
         let name = sandbox_name(worktree);
         if let Some(listed) = self.list()?.into_iter().find(|s| s.name == name) {
-            return self.ensure_running(&listed);
+            self.ensure_running(&listed)?;
+            let outdated = || {
+                self.bound_to(&listed)
+                    .account_dir()
+                    .is_some_and(|dir| dir != ws.account_dir)
+            };
+            if !ws.replace_outdated || !outdated() {
+                return Ok(());
+            }
+            self.remove_all(
+                std::slice::from_ref(&name),
+                &format!("replacing the {} for another account", self.engine.noun()),
+            )?;
         }
         if !self.image_present() {
             bail!(
@@ -933,11 +1081,8 @@ impl Backend for Container {
             );
         }
         let admin = admin_dir(worktree);
-        self.create(
-            &name,
-            worktree,
-            &mounts(&ws.repo, worktree, admin.as_deref()),
-        )
+        let mounts = mounts(&ws.repo, worktree, admin.as_deref());
+        self.create(&name, worktree, &mounts, ws.account_dir.as_deref())
     }
 
     fn save_template(&self, worktree: &Path, tag: &str) -> Result<Isolation> {
@@ -963,7 +1108,6 @@ impl Backend for Container {
         )?;
         Ok(match self.engine {
             Engine::Sbx => Isolation::DockerSandbox {
-                image: self.image.clone(),
                 template: Some(tag.to_owned()),
             },
             Engine::Docker => Isolation::Docker {
@@ -1016,6 +1160,7 @@ impl Backend for Container {
         Ok(tags
             .into_iter()
             .map(|(t, created)| (short_image_name(&t), created))
+            .filter(|(t, _)| self.engine != Engine::Sbx || !sbx_internal(t))
             .collect())
     }
 
@@ -1259,8 +1404,8 @@ impl Backend for Container {
     /// Bound to an environment: looked up inside it. Otherwise only what the image ships is known.
     fn which(&self, command: &str) -> Option<String> {
         if self.bound.is_none() {
-            return image_ships(self.engine == Engine::Sbx, &self.image, command)
-                .then(|| format!("in the `{}` image", self.image));
+            let ships = self.image == DEFAULT_CONTAINER_IMAGE && command == "claude";
+            return ships.then(|| format!("in the `{}` image", self.image));
         }
         let out = self
             .sh(r#"bash -lc 'command -v "$1"' _ "$1""#, &[command], None)
@@ -1478,6 +1623,16 @@ mod tests {
     }
 
     #[test]
+    fn hides_what_sbx_keeps_for_itself() {
+        let listed = [
+            "docker.io/library/sandbox-kit-assembled:5e1f2145",
+            "docker.io/docker/sandbox-templates:shell-docker",
+        ];
+        assert!(listed.iter().all(|t| sbx_internal(&short_image_name(t))));
+        assert!(!sbx_internal("worki-selfy-claude:20261114-2039"));
+    }
+
+    #[test]
     fn shortens_image_names() {
         assert_eq!(
             short_image_name("docker.io/library/worki-sam:1"),
@@ -1627,7 +1782,7 @@ mod tests {
     #[test]
     #[ignore]
     fn sbx_is_compatible() {
-        let check = Container::new(Engine::Sbx, DEFAULT_SANDBOX_IMAGE.into()).sbx_compatibility();
+        let check = Container::new(Engine::Sbx, SANDBOX_KIT.into()).sbx_compatibility();
         assert!(check.ok, "{:?}: {:?}", check.label, check.detail);
     }
 

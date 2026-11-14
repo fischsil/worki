@@ -3,10 +3,8 @@ import { useState } from "react";
 import {
   DEFAULT_AGENT_USER,
   DEFAULT_CONTAINER_IMAGE,
-  DEFAULT_SANDBOX_IMAGE,
   type Isolation,
   type ProjectIsolation,
-  SANDBOX_IMAGES,
 } from "../lib/api";
 import { useEnvironmentTemplates } from "../lib/queries";
 import { Input, Select } from "./ui";
@@ -61,7 +59,7 @@ export function IsolationPicker<T extends ProjectIsolation>({
       kind === "macUser"
         ? { kind, user: DEFAULT_AGENT_USER }
         : kind === "dockerSandbox"
-          ? { kind, image: DEFAULT_SANDBOX_IMAGE }
+          ? { kind }
           : kind === "docker" || kind === "podman"
             ? { kind, image: DEFAULT_CONTAINER_IMAGE }
             : ({ kind } as ProjectIsolation);
@@ -112,56 +110,39 @@ export function IsolationPicker<T extends ProjectIsolation>({
         </label>
       )}
       {value.kind === "dockerSandbox" && (
-        <SandboxImage
-          image={value.image}
+        <SandboxTemplate
           template={value.template ?? null}
-          onChange={(image, template) => onChange({ kind: "dockerSandbox", image, template } as T)}
+          onChange={(template) => onChange({ kind: "dockerSandbox", template } as T)}
         />
       )}
     </div>
   );
 }
 
-function SandboxImage({
-  image,
+function SandboxTemplate({
   template,
   onChange,
 }: {
-  image: string;
   template: string | null;
-  onChange: (image: string, template: string | null) => void;
+  onChange: (template: string | null) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <label className="flex items-center gap-2">
-        <span className="w-20 text-xs text-muted">Base image</span>
-        <Select value={image} onChange={(e) => onChange(e.target.value, template)} className="h-8 text-[13px]">
-          {SANDBOX_IMAGES.map((img) => (
-            <option key={img} value={img}>
-              {img}
-            </option>
-          ))}
-        </Select>
-      </label>
-      <label className="flex items-center gap-2">
-        <span className="w-20 text-xs text-muted">Start from</span>
+    <label className="flex flex-col gap-1">
+      <span className="flex items-center gap-2">
+        <span className="text-xs text-muted">Start from</span>
         <TemplateSelect
-          isolation={{ kind: "dockerSandbox", image }}
+          isolation={{ kind: "dockerSandbox" }}
           value={template}
           fallback={null}
-          fallbackLabel="Fresh (the agent's default image)"
-          onChange={(t) => onChange(image, t)}
+          fallbackLabel="Fresh sandbox"
+          onChange={onChange}
         />
-      </label>
-      <span className="text-xs text-faint">
-        Docker's sandbox image with that agent already in it. Agents missing from it are installed in a worktree's
-        sandbox the first time they start there.
       </span>
       <span className="text-xs text-faint">
-        A snapshot saved from a worktree's sandbox (Save snapshot in its isolation dialog) gives new worktrees
-        everything installed in it. Existing sandboxes keep theirs.
+        Agents are installed in a worktree's sandbox the first time they start there. Save a snapshot of one to give new
+        worktrees everything installed in it.
       </span>
-    </div>
+    </label>
   );
 }
 

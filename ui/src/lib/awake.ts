@@ -1,16 +1,19 @@
-import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "./api";
-import { useSessions } from "./queries";
-import { useUi } from "./store";
+import { api, errorMessage } from "./api";
+import { keys } from "./queries";
+import { toast } from "./toast";
 
-/** Holds off sleep while the setting is on and an agent is working. */
-export function useKeepAwake() {
-  const enabled = useUi((s) => s.keepAwake);
-  const { data: sessions = [] } = useSessions();
-  const working = sessions.some((s) => s.state.kind === "running" && s.activity === "working");
-  const on = enabled && working;
-  useEffect(() => {
-    api.keepAwake(on).catch(() => {});
-  }, [on]);
+/** Whether worki keeps the Mac awake while agent sessions are open, and a way to change it. */
+export function useKeepAwake(): [boolean, (on: boolean) => void] {
+  const qc = useQueryClient();
+  const { data: on = false } = useQuery({ queryKey: keys.keepAwake, queryFn: api.keepAwake });
+  const setOn = (next: boolean) => {
+    qc.setQueryData(keys.keepAwake, next);
+    api.setKeepAwake(next).catch((e) => {
+      qc.setQueryData(keys.keepAwake, !next);
+      toast(`Couldn't change keep awake: ${errorMessage(e)}`);
+    });
+  };
+  return [on, setOn];
 }

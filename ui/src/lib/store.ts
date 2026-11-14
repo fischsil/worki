@@ -67,10 +67,10 @@ interface UiState {
   agentView: SessionKind;
   /** Look for new worki releases on start and every few hours. */
   autoUpdate: boolean;
-  /** Keep the Mac from sleeping while an agent works. */
-  keepAwake: boolean;
   /** Commit box, commit list and rebasing in the changes panel. */
   showCommits: boolean;
+  /** The branch's commit list is open, not folded to its heading. */
+  commitListOpen: boolean;
   /** Pull request section and status, which ask GitHub through `gh`. */
   showPullRequests: boolean;
   /** Agent names and colours and friendlier empty views; off is the calm look. */
@@ -97,8 +97,8 @@ interface UiState {
   setReopenSessions: (on: boolean) => void;
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
-  setKeepAwake: (on: boolean) => void;
   setShowCommits: (on: boolean) => void;
+  setCommitListOpen: (open: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
   closeDialog: () => void;
@@ -133,8 +133,8 @@ export const useUi = create<UiState>()(
       reopenSessions: true,
       agentView: "terminal",
       autoUpdate: true,
-      keepAwake: false,
       showCommits: true,
+      commitListOpen: false,
       showPullRequests: true,
       playful: false,
       dialog: null,
@@ -170,8 +170,8 @@ export const useUi = create<UiState>()(
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
-      setKeepAwake: (keepAwake) => set({ keepAwake }),
       setShowCommits: (showCommits) => set({ showCommits }),
+      setCommitListOpen: (commitListOpen) => set({ commitListOpen }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
       closeDialog: () => set({ dialog: null }),
@@ -195,8 +195,8 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
-        keepAwake,
         showCommits,
+        commitListOpen,
         showPullRequests,
         playful,
         prDrafts,
@@ -219,8 +219,8 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
-        keepAwake,
         showCommits,
+        commitListOpen,
         showPullRequests,
         playful,
         prDrafts,

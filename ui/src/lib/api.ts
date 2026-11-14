@@ -3,7 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 export type Isolation =
   | { kind: "none" }
   | { kind: "macUser"; user: string }
-  | { kind: "dockerSandbox"; image: string; template?: string | null }
+  | { kind: "dockerSandbox"; template?: string | null }
   | { kind: "docker"; image: string }
   | { kind: "podman"; image: string }
   | ({ kind: "ssh" } & Remote);
@@ -53,8 +53,6 @@ export interface Check {
 }
 
 export const DEFAULT_AGENT_USER = "_worki";
-export const DEFAULT_SANDBOX_IMAGE = "claude";
-export const SANDBOX_IMAGES = ["claude", "codex", "gemini", "opencode", "shell"];
 /** Built locally by Set up for Docker and Podman. */
 export const DEFAULT_CONTAINER_IMAGE = "worki-agent:1";
 
@@ -76,7 +74,6 @@ export interface AgentStatus {
   envPath: string | null;
   hostPath: string | null;
   canShare: boolean;
-  inBaseImage: boolean;
   auth: { secret: string; set: boolean } | null;
 }
 
@@ -86,7 +83,7 @@ export function isolationLabel(i: Isolation): string {
   if (i.kind === "ssh") return `SSH · ${remoteLabel(i)}`;
   if (i.kind === "docker") return `Docker · ${i.image}`;
   if (i.kind === "podman") return `Podman · ${i.image}`;
-  return `Docker Sandbox · ${i.template ?? i.image}`;
+  return i.template ? `Docker Sandbox · ${i.template}` : "Docker Sandbox";
 }
 
 export interface Project {
@@ -129,6 +126,8 @@ export interface Worktree {
 export interface ChangedFile {
   path: string;
   code: string;
+  /** Lines added and removed; null for binary files or when they couldn't be counted. */
+  lines: { added: number; removed: number } | null;
 }
 
 export interface BranchChanges {
@@ -263,6 +262,25 @@ export interface AgentSettings {
   remoteControl: boolean;
   /** Claude Code settings passed to sessions in isolated environments. */
   claudeSettings: JsonObject;
+  accounts: ClaudeAccount[];
+  /** Account id by project id, where it isn't the default account. */
+  projectAccounts: Record<string, string>;
+  defaultAccount: string | null;
+}
+
+/** A Claude Code login of worki's own that projects can pick; its email is read after signing in. */
+export interface ClaudeAccount {
+  id: string;
+  email: string | null;
+  plan: string | null;
+  organization: string | null;
+}
+
+export type LoginEvent = { kind: "url"; url: string } | { kind: "output"; line: string };
+
+/** Each worktree gets its own container or sandbox, which can be snapshotted and share an account. */
+export function isContainer(i: Isolation | ProjectIsolation | null | undefined): boolean {
+  return i?.kind === "dockerSandbox" || i?.kind === "docker" || i?.kind === "podman";
 }
 
 export type JsonObject = { [key: string]: unknown };
@@ -379,8 +397,11 @@ export interface SessionInfo {
   attention: string | null;
   createdAt: number;
   /** Tokens the agent's current conversation used, per model (Claude Code only). */
-  usage: ModelUsage[];  /** Model, effort, context and the like, as the agent last reported them (Claude Code only). */
+  usage: ModelUsage[];
+  /** Model, effort, context and the like, as the agent last reported them (Claude Code only). */
   agent: AgentState;
+  /** Who the session's environment is signed in as, checked when it started. */
+  account: Account | null;
 }
 
 export interface AgentState {
@@ -397,6 +418,18 @@ export interface AgentState {
   version: string | null;
   /** Only reported by chat agents that can be continued on claude.ai/code. */
   remoteControl: { state: RemoteControlState; url: string | null } | null;
+  /** Who the agent is signed in as; only chat agents report it. */
+  account: Account | null;
+}
+
+export interface Account {
+  email: string | null;
+  plan: string | null;
+  organization: string | null;
+  /** Signed in with a token rather than a login, which may not tell whose account it is. */
+  token: boolean;
+  /** The name the user gave that token when signing in with it. */
+  tokenName: string | null;
 }
 
 export const api = {
@@ -462,7 +495,8 @@ export const api = {
   saveAgentProfiles: (profiles: AgentProfile[], defaultProfile: string | null) =>
     invoke<void>("save_agent_profiles", { profiles, defaultProfile }),
   setRemoteControl: (enabled: boolean) => invoke<void>("set_remote_control", { enabled }),
-  keepAwake: (on: boolean) => invoke<void>("keep_awake", { on }),
+  keepAwake: () => invoke<boolean>("keep_awake"),
+  setKeepAwake: (on: boolean) => invoke<void>("set_keep_awake", { on }),
   setClaudeSettings: (settings: JsonObject) => invoke<void>("set_claude_settings", { settings }),
   hostClaudeSettings: () => invoke<JsonObject>("host_claude_settings"),
   defaultClaudeSettings: () => invoke<JsonObject>("default_claude_settings"),
@@ -523,10 +557,11 @@ export const api = {
   removeIsolation: (isolation: Isolation) => invoke<void>("isolation_remove", { isolation }),
   agentStatuses: (isolation: Isolation) => invoke<AgentStatus[]>("agent_statuses", { isolation }),
   shareAgent: (isolation: Isolation, executable: string) => invoke<string>("share_agent", { isolation, executable }),
-  signInAgent: (isolation: Isolation, executable: string, onLog: (line: LogLine) => void) => {
+  /** Signs agents in `isolation` in with a new token; sessions using it show `name`. */
+  signInAgent: (isolation: Isolation, executable: string, name: string, onLog: (line: LogLine) => void) => {
     const channel = new Channel<LogLine>();
     channel.onmessage = onLog;
-    return invoke<void>("sign_in_agent", { isolation, executable, onLog: channel });
+    return invoke<void>("sign_in_agent", { isolation, executable, name, onLog: channel });
   },
   worktreeIsolation: (projectId: string, worktreePath: string) =>
     invoke<{ choice: ProjectIsolation; effective: Isolation }>("worktree_isolation", { projectId, worktreePath }),
@@ -537,6 +572,23 @@ export const api = {
     channel.onmessage = onLog;
     return invoke<void>("isolation_build_image", { isolation, onLog: channel });
   },
+  /** A new account to sign in next; the first one becomes the default. */
+  addClaudeAccount: () => invoke<ClaudeAccount>("add_claude_account"),
+  setDefaultAccount: (id: string) => invoke<void>("set_default_account", { id }),
+  /** Returns a warning when some of its projects' environments couldn't be removed. */
+  removeClaudeAccount: (id: string) => invoke<string | null>("remove_claude_account", { id }),
+  /** Runs `claude auth login` for the account; resolves once it's signed in. */
+  logInClaudeAccount: (id: string, onEvent: (event: LoginEvent) => void) => {
+    const channel = new Channel<LoginEvent>();
+    channel.onmessage = onEvent;
+    return invoke<ClaudeAccount>("log_in_claude_account", { id, onEvent: channel });
+  },
+  enterLoginCode: (id: string, code: string) => invoke<void>("enter_login_code", { id, code }),
+  cancelLogin: (id: string) => invoke<void>("cancel_login", { id }),
+  checkClaudeAccount: (id: string) => invoke<ClaudeAccount>("check_claude_account", { id }),
+  /** Each worktree's container or sandbox switches at its next session start while nothing runs in it. */
+  setProjectAccount: (projectId: string, accountId: string | null) =>
+    invoke<void>("set_project_account", { projectId, accountId }),
   secretStatus: (scope: string, names: string[]) => invoke<[string, boolean][]>("secret_status", { scope, names }),
   setSecret: (scope: string, name: string, value: string) => invoke<void>("set_secret", { scope, name, value }),
   deleteSecret: (scope: string, name: string) => invoke<void>("delete_secret", { scope, name }),

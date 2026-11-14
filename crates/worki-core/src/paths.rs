@@ -6,6 +6,10 @@ pub fn data_dir() -> PathBuf {
         .join("worki")
 }
 
+pub fn account_dir(id: &str) -> PathBuf {
+    data_dir().join("accounts").join(slug(id))
+}
+
 pub fn default_worktree_root(project_name: &str) -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
