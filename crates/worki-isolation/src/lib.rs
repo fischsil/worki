@@ -284,6 +284,16 @@ pub(crate) fn canonical(path: &Path) -> anyhow::Result<PathBuf> {
         .with_context(|| format!("resolve {}", path.display()))
 }
 
+/// An image or sbx template on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Template {
+    pub name: String,
+    /// Unix seconds.
+    pub created: Option<i64>,
+    /// Bytes.
+    pub size: Option<u64>,
+}
+
 /// Where a project's shared folder is inside its environments, also in `$WORKI_PROJECT_DIR`.
 pub const PROJECT_FOLDER: &str = "/worki/project";
 
@@ -401,9 +411,18 @@ pub trait Backend: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Like [`Backend::templates`], with when each was created (Unix seconds) if the engine says.
-    fn dated_templates(&self) -> anyhow::Result<Vec<(String, Option<i64>)>> {
-        Ok(self.templates()?.into_iter().map(|t| (t, None)).collect())
+    /// Like [`Backend::templates`], with when each was created and its size, where the engine
+    /// says.
+    fn template_details(&self) -> anyhow::Result<Vec<Template>> {
+        Ok(self
+            .templates()?
+            .into_iter()
+            .map(|name| Template {
+                name,
+                created: None,
+                size: None,
+            })
+            .collect())
     }
 
     /// Removes an image or sbx template named `tag`. The engine refuses while an environment

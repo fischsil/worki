@@ -886,35 +886,34 @@ impl ProjectService {
             Ok(SnapshotEngine::ALL
                 .into_iter()
                 .flat_map(|engine| {
-                    let names = engine
+                    let templates = engine
                         .isolation()
                         .backend()
-                        .dated_templates()
+                        .template_details()
                         .unwrap_or_default();
-                    names
-                        .into_iter()
-                        .map(move |(name, created)| (engine, name, created))
+                    templates.into_iter().map(move |t| (engine, t))
                 })
                 .collect::<Vec<_>>())
         })
         .await?;
         let mut snapshots: Vec<Snapshot> = found
             .into_iter()
-            .filter(|(engine, name, _)| {
-                let key = (*engine, name.clone());
-                (name.starts_with("worki-") && name != worki_isolation::DEFAULT_CONTAINER_IMAGE)
+            .filter(|(engine, t)| {
+                let key = (*engine, t.name.clone());
+                (t.name.starts_with("worki-") && t.name != worki_isolation::DEFAULT_CONTAINER_IMAGE)
                     || recorded.contains(&key)
                     || users.iter().any(|(used, _)| *used == key)
             })
-            .map(|(engine, name, created)| Snapshot {
+            .map(|(engine, t)| Snapshot {
                 used_by: users
                     .iter()
-                    .filter(|((e, n), _)| *e == engine && *n == name)
+                    .filter(|((e, n), _)| *e == engine && *n == t.name)
                     .map(|(_, by)| by.clone())
                     .collect(),
                 engine,
-                name,
-                created,
+                name: t.name,
+                created: t.created,
+                size: t.size,
             })
             .collect();
         snapshots

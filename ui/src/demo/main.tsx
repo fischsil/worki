@@ -563,10 +563,10 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return args.worktreePath === checkout ? commits : args.worktreePath === login ? commits.slice(-1) : [];
     case "snapshots":
       return [
-        { engine: "dockerSandbox", name: "worki-acme-web:20261104-1012", created: 1793783520, usedBy: ["acme-web"] },
-        { engine: "dockerSandbox", name: "worki-acme-web:20261020-0931", created: 1792488660, usedBy: [] },
-        { engine: "docker", name: "worki-payments-api:20261101-1630", created: 1793547000, usedBy: ["payments-api › feat-refund-webhooks"] },
-        { engine: "docker", name: "worki-infra:20260930-0815", created: 1790748900, usedBy: [] },
+        { engine: "dockerSandbox", name: "worki-acme-web:20261104-1012", created: 1793783520, size: 4_020_000_000, usedBy: ["acme-web"] },
+        { engine: "dockerSandbox", name: "worki-acme-web:20261020-0931", created: 1792488660, size: 3_610_000_000, usedBy: [] },
+        { engine: "docker", name: "worki-payments-api:20261101-1630", created: 1793547000, size: 1_240_000_000, usedBy: ["payments-api › feat-refund-webhooks"] },
+        { engine: "docker", name: "worki-infra:20260930-0815", created: 1790748900, size: 612_000_000, usedBy: [] },
       ];
     case "delete_snapshot":
       return null;

@@ -16,7 +16,8 @@ use serde_json::Value;
 use crate::{
     check_output, command_path, ensure_relative, ensure_valid_env, file_contents, home_path,
     host_which, pack_home_files, stderr_text, Backend, Check, Fix, Isolation, Launch,
-    LaunchRequest, Outdated, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
+    LaunchRequest, Outdated, Template, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT,
+    WRITE_FILE_SCRIPT,
 };
 
 /// sbx's kit for every sandbox: agents are installed on first use, not taken from sbx's agent
@@ -862,7 +863,7 @@ fn short_image_name(tag: &str) -> String {
 /// Tags from `sbx template ls --json`, with when they were created (Unix seconds) when listed:
 /// a list (or `{"templates"|"images": [...]}`) of entries with `repository` and `tag`, a `tags`
 /// list, or a single `tag`/`name`/`reference`.
-fn parse_template_listing(json: &str) -> Vec<(String, Option<i64>)> {
+fn parse_template_listing(json: &str) -> Vec<Template> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
     };
@@ -891,24 +892,51 @@ fn parse_template_listing(json: &str) -> Vec<(String, Option<i64>)> {
             serde_json::Value::String(s) => parse_created(&s),
             _ => None,
         });
+        let size = value(e, &["size"]).and_then(|v| match v {
+            serde_json::Value::Number(n) => n.as_u64(),
+            serde_json::Value::String(s) => parse_size(&s),
+            _ => None,
+        });
+        let template = |name: String| Template {
+            name,
+            created,
+            size,
+        };
         if let Some(list) = value(e, &["tags"]).and_then(|v| v.as_array().cloned()) {
             tags.extend(
                 list.iter()
                     .filter_map(|t| t.as_str())
-                    .map(|t| (t.to_owned(), created)),
+                    .map(|t| template(t.to_owned())),
             );
         } else if let (Some(repo), Some(tag)) =
             (field(e, &["repository", "repo"]), field(e, &["tag"]))
         {
-            tags.push((format!("{repo}:{tag}"), created));
+            tags.push(template(format!("{repo}:{tag}")));
         } else if let Some(tag) = field(e, &["tag", "name", "reference", "ref"]) {
-            tags.push((tag, created));
+            tags.push(template(tag));
         } else if let Some(tag) = e.as_str() {
-            tags.push((tag.to_owned(), created));
+            tags.push(template(tag.to_owned()));
         }
     }
-    tags.retain(|(t, _)| !t.is_empty() && !t.contains("<none>"));
+    tags.retain(|t| !t.name.is_empty() && !t.name.contains("<none>"));
     tags
+}
+
+/// Bytes from the sizes Docker and Podman print: `590MB`, `4.02GB`, `1.1 kB` (powers of 1000).
+fn parse_size(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let split = text.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+    let (number, unit) = text.split_at(split);
+    let number: f64 = number.parse().ok()?;
+    let factor = match unit.trim().to_ascii_uppercase().as_str() {
+        "B" => 1e0,
+        "KB" => 1e3,
+        "MB" => 1e6,
+        "GB" => 1e9,
+        "TB" => 1e12,
+        _ => return None,
+    };
+    Some((number * factor).round() as u64)
 }
 
 /// Unix seconds from the dates engines print: `2026-11-04 10:12:00 +0100 CET` (Docker,
@@ -1218,16 +1246,16 @@ impl Backend for Container {
 
     fn templates(&self) -> Result<Vec<String>> {
         let mut tags: Vec<String> = self
-            .dated_templates()?
+            .template_details()?
             .into_iter()
-            .map(|(t, _)| t)
+            .map(|t| t.name)
             .collect();
         tags.sort();
         tags.dedup();
         Ok(tags)
     }
 
-    fn dated_templates(&self) -> Result<Vec<(String, Option<i64>)>> {
+    fn template_details(&self) -> Result<Vec<Template>> {
         if self.engine.binary().is_err() || !self.engine_running() {
             return Ok(Vec::new());
         }
@@ -1241,23 +1269,30 @@ impl Backend for Container {
                         "image",
                         "ls",
                         "--format",
-                        "{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}",
+                        "{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}\t{{.Size}}",
                     ],
                     "listing images",
                 )?
                 .lines()
                 .map(str::trim)
                 .filter(|l| !l.is_empty() && !l.contains("<none>"))
-                .map(|l| match l.split_once('\t') {
-                    Some((tag, created)) => (tag.to_owned(), parse_created(created)),
-                    None => (l.to_owned(), None),
+                .map(|l| {
+                    let mut fields = l.split('\t');
+                    Template {
+                        name: fields.next().unwrap_or_default().to_owned(),
+                        created: fields.next().and_then(parse_created),
+                        size: fields.next().and_then(parse_size),
+                    }
                 })
                 .collect(),
         };
         Ok(tags
             .into_iter()
-            .map(|(t, created)| (short_image_name(&t), created))
-            .filter(|(t, _)| self.engine != Engine::Sbx || !sbx_internal(t))
+            .map(|t| Template {
+                name: short_image_name(&t.name),
+                ..t
+            })
+            .filter(|t| self.engine != Engine::Sbx || !sbx_internal(&t.name))
             .collect())
     }
 
@@ -1772,6 +1807,23 @@ mod tests {
         assert_eq!(short_image_name("app"), "app:latest");
     }
 
+    fn template(name: &str, created: Option<i64>, size: Option<u64>) -> Template {
+        Template {
+            name: name.into(),
+            created,
+            size,
+        }
+    }
+
+    #[test]
+    fn reads_image_sizes() {
+        assert_eq!(parse_size("590MB"), Some(590_000_000));
+        assert_eq!(parse_size("4.02GB"), Some(4_020_000_000));
+        assert_eq!(parse_size("1.1 kB"), Some(1_100));
+        assert_eq!(parse_size("12B"), Some(12));
+        assert_eq!(parse_size("big"), None);
+    }
+
     #[test]
     fn reads_template_listings() {
         assert_eq!(
@@ -1779,16 +1831,20 @@ mod tests {
                 r#"[{"Repository":"worki-app","Tag":"1","CreatedAt":"2026-11-04T09:12:00Z"},{"tags":["a:1","b:2"]}]"#
             ),
             [
-                ("worki-app:1".to_string(), Some(1_793_783_520)),
-                ("a:1".to_string(), None),
-                ("b:2".to_string(), None)
+                template("worki-app:1", Some(1_793_783_520), None),
+                template("a:1", None, None),
+                template("b:2", None, None),
             ]
         );
         assert_eq!(
             parse_template_listing(
-                r#"{"images":[{"tag":"myimage:v1.0","id":"abc","created":1700000000},{"repository":"<none>","tag":"<none>"}]}"#
+                r#"{"images":[{"tag":"myimage:v1.0","id":"abc","created":1700000000,"size":683901918},{"repository":"<none>","tag":"<none>"}]}"#
             ),
-            [("myimage:v1.0".to_string(), Some(1_700_000_000))]
+            [template(
+                "myimage:v1.0",
+                Some(1_700_000_000),
+                Some(683_901_918)
+            )]
         );
         assert!(parse_template_listing("not json").is_empty());
         assert_eq!(

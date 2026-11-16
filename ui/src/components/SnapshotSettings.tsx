@@ -15,6 +15,23 @@ const ENGINES: Record<SnapshotEngine, string> = {
 
 const created = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
+/** A size the way the engines print it, in powers of 1000. */
+function formatSize(bytes: number): string {
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+const totalSize = (snapshots: Snapshot[]) => {
+  const sizes = snapshots.map((s) => s.size).filter((s): s is number => s !== null);
+  return sizes.length ? sizes.reduce((a, b) => a + b, 0) : null;
+};
+
 /** Saved environment snapshots, what starts from them, and deleting the ones nothing uses. */
 export function SnapshotSettings() {
   const { data: snapshots, isFetching, refetch, error: loadError } = useSnapshots();
@@ -43,16 +60,21 @@ export function SnapshotSettings() {
         ) : snapshots.length === 0 ? (
           <p className="text-xs text-muted">No snapshots yet.</p>
         ) : (
-          engines.map((engine) => (
-            <div key={engine} className="flex flex-col gap-1">
-              <h3 className="text-[11px] font-semibold tracking-wide text-faint uppercase">{ENGINES[engine]}</h3>
-              {snapshots
-                .filter((s) => s.engine === engine)
-                .map((s) => (
+          engines.map((engine) => {
+            const listed = snapshots.filter((s) => s.engine === engine);
+            const total = totalSize(listed);
+            return (
+              <div key={engine} className="flex flex-col gap-1">
+                <h3 className="flex items-baseline gap-2 text-[11px] font-semibold tracking-wide text-faint uppercase">
+                  {ENGINES[engine]}
+                  {total !== null && <span className="font-normal normal-case tabular-nums">{formatSize(total)}</span>}
+                </h3>
+                {listed.map((s) => (
                   <SnapshotRow key={s.name} snapshot={s} onError={setError} />
                 ))}
-            </div>
-          ))
+              </div>
+            );
+          })
         )}
         <ErrorText>{error ?? (loadError ? errorMessage(loadError) : null)}</ErrorText>
       </div>
@@ -93,6 +115,9 @@ function SnapshotRow({ snapshot, onError }: { snapshot: Snapshot; onError: (erro
           {used ? `Used by ${snapshot.usedBy.join(", ")}` : "Not used"}
         </div>
       </div>
+      {snapshot.size !== null && (
+        <span className="shrink-0 text-[12px] text-muted tabular-nums">{formatSize(snapshot.size)}</span>
+      )}
       <IconButton
         label={used ? "Pick another isolation where it's used to delete it" : "Delete snapshot"}
         onClick={remove}

@@ -255,6 +255,8 @@ export interface Snapshot {
   name: string;
   /** Unix seconds, when the engine says. */
   created: number | null;
+  /** Bytes, when the engine says. */
+  size: number | null;
   usedBy: string[];
 }
 

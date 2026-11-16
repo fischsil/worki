@@ -209,6 +209,8 @@ pub struct Snapshot {
     pub name: String,
     /// Unix seconds, when the engine says.
     pub created: Option<i64>,
+    /// Bytes, when the engine says.
+    pub size: Option<u64>,
     /// "The default isolation", project names, or "project › worktree".
     pub used_by: Vec<String>,
 }
