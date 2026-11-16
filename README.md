@@ -188,7 +188,14 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 1. Download `worki_<version>_universal.dmg` from the
    [latest release](https://github.com/silvanfischer/worki/releases/latest). It runs on
    Apple Silicon and Intel Macs with macOS 13 or later, and is signed and notarized by Apple.
-2. Open the DMG and drag **worki** into **Applications**.
+2. Open the DMG and drag **worki** into **Applications**. Or install it with Homebrew:
+
+   ```bash
+   brew tap silvanfischer/tap
+   brew trust silvanfischer/tap
+   brew install --cask worki
+   ```
+
 3. For container isolation, install Docker Sandboxes, Docker Desktop or Podman. User Isolation
    needs nothing extra.
 
