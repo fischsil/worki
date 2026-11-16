@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { isNotable, lastStep, useActivities, useSeenActivities } from "../lib/activities";
 import type { Operation } from "../lib/api";
 import { useProjects } from "../lib/queries";
-import { elapsed, useNow } from "../lib/time";
+import { clockTime, elapsed, fullTime, useNow } from "../lib/time";
 import { LogView, useDismiss } from "./ui";
 
 /** The sidebar's activity indicator: the running operation's latest step, and the panel of recent ones. */
@@ -108,6 +108,9 @@ function ActivityRow({
         <span className="min-w-0 flex-1 truncate">
           {activity.title}
           <Subject activity={activity} />
+        </span>
+        <span className="shrink-0 text-[11px] text-faint tabular-nums" title={`Started ${fullTime(activity.startedAt)}`}>
+          {clockTime(activity.startedAt)}
         </span>
         <Elapsed activity={activity} />
         <ChevronRight size={12} className={clsx("shrink-0 text-faint transition-transform", expanded && "rotate-90")} />

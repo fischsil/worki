@@ -52,6 +52,7 @@ export function App() {
 
   useFollowSignIns();
   useActivityEvents();
+  useTauriEvent("open-settings", () => openDialog({ kind: "settings", tab: "general" }));
 
   useTauriEvent("agent-installed", ({ projectId, worktreePath, agent }) =>
     toast(`${agent} was installed in this worktree's environment. Save a snapshot so new worktrees start with it.`, "info", {

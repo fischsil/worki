@@ -15,7 +15,7 @@ PROFILES=$(mktemp -d)
 trap 'kill "$VITE" 2>/dev/null; rm -rf "$PROFILES"' EXIT
 until curl -sf "http://localhost:$PORT/demo.html" >/dev/null; do sleep 0.3; done
 
-scenes=${*:-hero main chat terminal branch isolation settings accounts}
+scenes=${*:-hero main chat terminal branch isolation settings accounts activity}
 for scene in $scenes; do
   # A fresh profile for every scene: what one scene saves would change the next.
   PROFILE="$PROFILES/$scene"

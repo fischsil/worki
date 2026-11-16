@@ -397,7 +397,15 @@ const activities = [
     startedAt: at(120_000),
     finishedAt: at(112_000),
     error: null,
-    lines: [info("Creating worktree fix/login-race from main…"), info("Running setup script as you…"), { stream: "stdout", line: "added 812 packages in 6s" }, info("Done.")],
+    lines: [
+      { stream: "command", line: "git -C /Users/dev/src/acme-web show-ref --verify --quiet refs/heads/fix/login-race" },
+      { stream: "command", line: "git -C /Users/dev/src/acme-web rev-parse --verify --quiet 'main^{commit}'" },
+      info("Creating worktree fix/login-race from main…"),
+      { stream: "command", line: "git -C /Users/dev/src/acme-web worktree add --no-track -b fix/login-race /Users/dev/worki/worktrees/acme-web/fix-login-race main" },
+      info("Running setup script as you…"),
+      { stream: "stdout", line: "added 812 packages in 6s" },
+      info("Done."),
+    ],
   },
   {
     id: 1,
@@ -784,6 +792,14 @@ if (scene === "accounts") {
     else setTimeout(show, 100);
   };
   show();
+}
+if (scene === "activity") {
+  const open = () => {
+    const button = [...document.querySelectorAll("button")].find((b) => b.title.startsWith("Start Claude Code"));
+    if (button) button.click();
+    else setTimeout(open, 100);
+  };
+  open();
 }
 if (scene === "isolation") {
   const open = () => {

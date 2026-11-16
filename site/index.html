@@ -18,6 +18,7 @@
     <nav>
       <a href="#isolation">Isolation</a>
       <a href="#accounts">Accounts</a>
+      <a href="#activity">Activity</a>
       <a href="#chat">Chat</a>
       <a href="#review">Pull requests</a>
       <a href="#start">Get started</a>
@@ -129,6 +130,23 @@
       <figure class="shot">
         <img src="screenshots/accounts.png" width="3200" height="2000" loading="lazy"
              alt="Two Claude Code accounts in the Agents settings, one marked as default; the sidebar shows each project's account">
+      </figure>
+    </section>
+
+    <section id="activity" class="feature">
+      <div class="heading">
+        <p class="eyebrow">Transparent</p>
+        <h2>Nothing happens out of sight. Watch every step worki takes in the background.</h2>
+        <p>Creating worktrees, starting agents in sandboxes, saving snapshots, pushing branches.</p>
+      </div>
+      <div class="grid">
+        <article><h3>Every step, as it happens</h3><p>The sidebar shows what's running now, with a spinner on its worktree. The Activity panel keeps recent operations, when they started and how long they took.</p></article>
+        <article><h3>The commands it ran</h3><p>Each step lists the <code>git</code>, <code>docker</code>, <code>sbx</code> and <code>ssh</code> commands behind it. Secret-looking values are hidden.</p></article>
+        <article><h3>Nothing blocks you</h3><p>Dialogs close as soon as you confirm. The work carries on in the background, and failures show up with their error.</p></article>
+      </div>
+      <figure class="shot">
+        <img src="screenshots/activity.png" width="3200" height="2000" loading="lazy"
+             alt="The Activity panel: an agent starting in a Docker Sandbox with each step and the commands worki ran, a created worktree and a failed snapshot">
       </figure>
     </section>
 

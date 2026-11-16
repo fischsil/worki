@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use tauri::menu::Menu;
 #[cfg(target_os = "macos")]
-use tauri::menu::{AboutMetadata, PredefinedMenuItem};
+use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use worki_core::ProjectService;
 use worki_pty::{SessionHost, SessionInfo};
@@ -70,7 +70,9 @@ fn fit_to_screen(window: &tauri::WebviewWindow) {
     window.center().ok();
 }
 
-/// Tauri's default menu, with worki's icon in the About panel.
+const OPEN_SETTINGS: &str = "open-settings";
+
+/// Tauri's default menu, with worki's icon in the About panel and Settings below it.
 fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     #[cfg(target_os = "macos")]
@@ -91,6 +93,10 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )?;
         app_submenu.remove_at(0)?;
         app_submenu.insert(&about, 0)?;
+        let settings =
+            MenuItem::with_id(app, OPEN_SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))?;
+        app_submenu.insert(&settings, 2)?;
+        app_submenu.insert(&PredefinedMenuItem::separator(app)?, 3)?;
     }
     Ok(menu)
 }
@@ -98,6 +104,11 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 pub fn run() {
     let app = tauri::Builder::default()
         .menu(app_menu)
+        .on_menu_event(|app, event| {
+            if event.id() == OPEN_SETTINGS {
+                app.emit(OPEN_SETTINGS, ()).ok();
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())

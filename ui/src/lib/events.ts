@@ -7,6 +7,8 @@ import type { LogLine, Operation, SessionInfo } from "./api";
 export interface AppEvents {
   "session-changed": SessionInfo;
   "app-quitting": null;
+  /** Settings… was chosen in the app menu. */
+  "open-settings": null;
   /** An activity started or finished. */
   activity: Operation;
   /** A step or output line an activity logged. */

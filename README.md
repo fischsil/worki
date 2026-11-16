@@ -95,6 +95,23 @@ same time, without signing out and in again.
 
 Accounts work in Docker Sandboxes, Docker and Podman.
 
+## Nothing happens out of sight
+
+Creating a worktree, starting an agent in a sandbox, saving a snapshot: whatever worki does in
+the background, you can watch it happen.
+
+<p align="center">
+  <img src="docs/screenshots/activity.png" alt="The Activity panel: an agent starting in a Docker Sandbox with each step and the commands worki ran, a created worktree and a failed snapshot" width="900">
+</p>
+
+- **Every step, as it happens.** The sidebar shows what's running right now, and the worktree it
+  runs for gets a spinner. The Activity panel keeps the recent operations with when they started
+  and how long they took.
+- **The commands it ran.** Each step lists the commands worki ran for it: `git`, `docker`, `sbx`,
+  `ssh`, your setup script. Secret-looking values are hidden.
+- **Nothing blocks you.** Dialogs close as soon as you confirm; the work carries on in the
+  background, and a failure shows up in the panel with its error.
+
 ## Chat or terminal
 
 <p align="center">
