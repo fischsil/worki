@@ -117,7 +117,7 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
     setWriting(true);
     setError(null);
     try {
-      const commits = await api.draftCommits(worktreePath, files, askPrompt("commitMessage"), writer);
+      const commits = await api.draftCommits(worktreePath, files, askPrompt("commitMessage"), { ...writer, fork: null });
       if (commits.length === 1) setMessage(commits[0].message);
       else setDrafts(commits);
     } catch (e) {

@@ -215,8 +215,10 @@ colors, keep the background transparent, and use rounded corners and generous sp
 light palette (it is shown on white).";
 
 /// Writes commit messages and pull requests when the user hasn't set their own command.
-pub const DEFAULT_WRITER_COMMAND: &str =
-    "claude --model haiku {fork} --no-session-persistence -p {prompt}";
+/// Without tools, MCP servers or skills: everything the writer needs is in the prompt, and
+/// Claude Code starts seconds sooner without them.
+pub const DEFAULT_WRITER_COMMAND: &str = "claude --model haiku {fork} --no-session-persistence \
+--tools \"\" --strict-mcp-config --disable-slash-commands -p {prompt}";
 
 /// Shell code running the user's writer `template` once without a terminal: `{prompt}` becomes
 /// the prompt in `$WORKI_PROMPT`, and `{fork}` becomes `--resume <fork> --fork-session` once
@@ -449,7 +451,8 @@ mod tests {
             String::from_utf8(out.stdout).unwrap()
         };
         let default = super::DEFAULT_WRITER_COMMAND;
-        let fresh = "--model|haiku|--no-session-persistence|-p|say hi|";
+        let lean = "--tools||--strict-mcp-config|--disable-slash-commands";
+        let fresh = format!("--model|haiku|--no-session-persistence|{lean}|-p|say hi|");
         assert_eq!(run(default, None), fresh);
         assert_eq!(run(default, Some("abc")), fresh);
         let project = home.path().join(".claude/projects/-w");
@@ -457,7 +460,7 @@ mod tests {
         std::fs::write(project.join("abc.jsonl"), "").unwrap();
         assert_eq!(
             run(default, Some("abc")),
-            "--model|haiku|--resume|abc|--fork-session|--no-session-persistence|-p|say hi|"
+            format!("--model|haiku|--resume|abc|--fork-session|--no-session-persistence|{lean}|-p|say hi|")
         );
         assert_eq!(run("claude -p {prompt}", Some("abc")), "-p|say hi|");
     }

@@ -200,7 +200,7 @@ export function DiffView({
           <p className="p-3 text-faint">No changes in this file anymore.</p>
         )}
         {parsed && parsed.lines.length > 0 && (
-          <table className="w-full border-collapse">
+          <table className="w-max min-w-full border-collapse">
             <tbody>
               {rows.map((row) => {
                 if (row.kind === "gap")
@@ -251,7 +251,7 @@ export function DiffView({
                         </button>
                         {l.newNo ?? ""}
                       </td>
-                      <td className="px-3 whitespace-pre-wrap wrap-anywhere">
+                      <td className="px-3 whitespace-pre">
                         {l.kind !== "context" && <span className="sr-only">{l.kind === "add" ? "Added: " : "Removed: "}</span>}
                         <Code text={l.text} tokens={tokens?.get(i)} changed={words.get(i)} kind={l.kind} />
                       </td>

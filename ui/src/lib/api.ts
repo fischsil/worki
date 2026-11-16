@@ -266,7 +266,8 @@ export interface Writer {
   command: string | null;
 }
 
-export const DEFAULT_WRITER_COMMAND = "claude --model haiku {fork} --no-session-persistence -p {prompt}";
+export const DEFAULT_WRITER_COMMAND =
+  'claude --model haiku {fork} --no-session-persistence --tools "" --strict-mcp-config --disable-slash-commands -p {prompt}';
 
 export interface AgentSettings {
   profiles: AgentProfile[];

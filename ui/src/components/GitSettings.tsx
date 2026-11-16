@@ -34,7 +34,7 @@ export function GitSettings() {
         <Group title="Agent tasks">
           <Field
             label="Command for writing"
-            hint="Writes commit messages and pull request descriptions in the background. {fork} copies the conversation of the worktree's Claude agent when there is one, {prompt} is the task. For Codex: codex exec {prompt}"
+            hint="Writes commit messages and pull request descriptions in the background. For pull request descriptions, {fork} copies the conversation of the worktree's Claude agent when there is one; commit messages are written from the changes alone. {prompt} is the task. For Codex: codex exec {prompt}"
           >
             <Input
               value={writerCommand || DEFAULT_WRITER_COMMAND}
