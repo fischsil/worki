@@ -302,9 +302,24 @@ pub struct Workspace {
     pub claude_login_dir: Option<PathBuf>,
     /// A folder all the project's environments share, at [`PROJECT_FOLDER`] inside.
     pub shared_folder: Option<PathBuf>,
-    /// Replace an existing environment made with other Claude Code folders or project folder.
-    /// Only when nothing runs in it, since replacing it stops what does.
-    pub replace_outdated: bool,
+    /// What to do with an existing environment made with other Claude Code folders or project
+    /// folder than `ws` asks for.
+    pub outdated: Outdated,
+}
+
+/// What [`Backend::grant_access`] does with an environment made with other settings than it's
+/// asked for now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Outdated {
+    /// Use it as it is, for work that doesn't depend on them.
+    #[default]
+    Keep,
+    /// Replace it with one made with the new settings; only when nothing runs in it, since
+    /// replacing it stops what does.
+    Replace,
+    /// Refuse to use it: something runs in it, so it can't be replaced, and a session started
+    /// in it would run with the old settings.
+    Refuse,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

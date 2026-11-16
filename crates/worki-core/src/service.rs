@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::config::RepoConfig;
 use crate::model::*;
-use worki_isolation::{Backend, LaunchRequest, Workspace};
+use worki_isolation::{Backend, LaunchRequest, Outdated, Workspace};
 
 use crate::openers::{self, OpenerSettings};
 use crate::setup::{run_captured, run_logged};
@@ -1052,7 +1052,7 @@ impl ProjectService {
             claude_dir: None,
             claude_login_dir: None,
             shared_folder: None,
-            replace_outdated: false,
+            outdated: Outdated::Keep,
         }
     }
 
@@ -1063,17 +1063,20 @@ impl ProjectService {
         project: &Project,
         worktree: Option<&Path>,
     ) -> Result<Isolation> {
-        Ok(self.grant_access_with(project, worktree, false).await?.0)
+        Ok(self
+            .grant_access_with(project, worktree, Outdated::Keep)
+            .await?
+            .0)
     }
 
-    /// [`Self::grant_access`], also replacing the worktree's environment when it was made with
-    /// other Claude Code folders or project folder than it gets now: only when nothing runs in
-    /// it. Returns the Claude Code folders sessions there use.
+    /// [`Self::grant_access`], with `outdated` saying what to do when the worktree's environment
+    /// was made with other Claude Code folders or project folder than it gets now. Returns the
+    /// Claude Code folders sessions there use.
     pub async fn grant_access_with(
         &self,
         project: &Project,
         worktree: Option<&Path>,
-        replace_outdated: bool,
+        outdated: Outdated,
     ) -> Result<(Isolation, Option<ClaudeHome>)> {
         let isolation = match worktree {
             Some(w) => self.isolation_for_worktree(project, w)?,
@@ -1090,7 +1093,7 @@ impl ProjectService {
                 std::fs::create_dir_all(dir)?;
             }
             let ws = Workspace {
-                replace_outdated,
+                outdated,
                 claude_login_dir: home.as_ref().and_then(|h| h.login_dir.clone()),
                 claude_dir: home.as_ref().map(|h| h.dir.clone()),
                 shared_folder,

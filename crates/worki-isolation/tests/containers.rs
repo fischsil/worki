@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use worki_isolation::{Container, Isolation, LaunchRequest, Workspace};
+use worki_isolation::{Container, Isolation, LaunchRequest, Outdated, Workspace};
 
 /// A public image with bash, git and tar, so Docker and Podman tests don't need worki's image.
 const TEST_IMAGE: &str = "docker.io/library/buildpack-deps:bookworm-scm";
@@ -92,7 +92,7 @@ fn lifecycle(isolation: Isolation) {
         claude_dir: None,
         claude_login_dir: None,
         shared_folder: None,
-        replace_outdated: false,
+        outdated: Outdated::Keep,
     };
     backend.grant_access(&ws).expect("environment created");
     backend.grant_access(&ws).expect("second grant is a no-op");
@@ -228,7 +228,7 @@ fn main_checkout(isolation: Isolation) {
         claude_dir: None,
         claude_login_dir: None,
         shared_folder: None,
-        replace_outdated: false,
+        outdated: Outdated::Keep,
     };
     backend.grant_access(&ws).expect("environment created");
     let run_in = |command: &str| {
@@ -354,14 +354,14 @@ fn account_switch(isolation: Isolation) {
 
     let backend = isolation.backend();
     backend.ready().expect("engine available and running");
-    let ws = |account: &Path, replace_outdated| Workspace {
+    let ws = |account: &Path, outdated| Workspace {
         repo: repo.clone(),
         worktree_root: root.clone(),
         worktree: Some(repo.clone()),
         claude_dir: Some(account.to_path_buf()),
         claude_login_dir: None,
         shared_folder: None,
-        replace_outdated,
+        outdated,
     };
     let config_dir = || {
         let (ok, out) = run(backend
@@ -378,15 +378,29 @@ fn account_switch(isolation: Isolation) {
         out.lines().last().unwrap_or_default().to_owned()
     };
 
-    backend.grant_access(&ws(&first, true)).expect("created");
+    backend
+        .grant_access(&ws(&first, Outdated::Replace))
+        .expect("created");
     assert_eq!(config_dir(), first.display().to_string());
-    backend.grant_access(&ws(&second, false)).expect("kept");
+    backend
+        .grant_access(&ws(&second, Outdated::Keep))
+        .expect("kept");
     assert_eq!(config_dir(), first.display().to_string());
-    backend.grant_access(&ws(&second, true)).expect("replaced");
+    let refused = backend.grant_access(&ws(&second, Outdated::Refuse));
+    assert!(
+        refused.is_err(),
+        "a session must not start in an outdated environment"
+    );
+    assert_eq!(config_dir(), first.display().to_string());
+    backend
+        .grant_access(&ws(&second, Outdated::Replace))
+        .expect("replaced");
     assert_eq!(config_dir(), second.display().to_string());
     assert!(second.exists());
 
-    backend.release(&ws(&second, false)).expect("removed");
+    backend
+        .release(&ws(&second, Outdated::Keep))
+        .expect("removed");
 }
 
 #[test]
@@ -469,14 +483,14 @@ fn claude_files_and_project_folder(isolation: Isolation) {
 
     let backend = isolation.backend();
     backend.ready().expect("engine available and running");
-    let ws = |wt: &Path, dir: &Path, shared_folder: bool, replace_outdated| Workspace {
+    let ws = |wt: &Path, dir: &Path, shared_folder: bool, outdated| Workspace {
         repo: repo.clone(),
         worktree_root: root.clone(),
         worktree: Some(wt.to_path_buf()),
         claude_dir: Some(dir.to_path_buf()),
         claude_login_dir: Some(login.clone()),
         shared_folder: shared_folder.then(|| shared.clone()),
-        replace_outdated,
+        outdated,
     };
     let in_env = |wt: &Path, command: &str| {
         run(backend
@@ -493,10 +507,10 @@ fn claude_files_and_project_folder(isolation: Isolation) {
     let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
 
     backend
-        .grant_access(&ws(&wt_a, &own_a, true, false))
+        .grant_access(&ws(&wt_a, &own_a, true, Outdated::Keep))
         .expect("environment a");
     backend
-        .grant_access(&ws(&wt_b, &own_b, true, false))
+        .grant_access(&ws(&wt_b, &own_b, true, Outdated::Keep))
         .expect("environment b");
 
     for (wt, dir, other) in [(&wt_a, &own_a, &own_b), (&wt_b, &own_b, &own_a)] {
@@ -560,7 +574,7 @@ fn claude_files_and_project_folder(isolation: Isolation) {
     assert_eq!(read(shared.join("b")), "from-b\n");
 
     backend
-        .grant_access(&ws(&wt_a, &own_a, false, true))
+        .grant_access(&ws(&wt_a, &own_a, false, Outdated::Replace))
         .expect("replaced without the project folder");
     let (ok, out) = in_env(
         &wt_a,
@@ -573,10 +587,10 @@ fn claude_files_and_project_folder(isolation: Isolation) {
     assert_eq!(read(shared.join("b")), "from-b\n");
 
     backend
-        .release(&ws(&wt_a, &own_a, false, false))
+        .release(&ws(&wt_a, &own_a, false, Outdated::Keep))
         .expect("a removed");
     backend
-        .release(&ws(&wt_b, &own_b, true, false))
+        .release(&ws(&wt_b, &own_b, true, Outdated::Keep))
         .expect("b removed");
     for wt in [&wt_a, &wt_b] {
         git(

@@ -14,7 +14,7 @@ use worki_core::{
     SavedSession,
 };
 use worki_isolation::ssh::{Ssh, SshTarget};
-use worki_isolation::{LaunchRequest, SessionMeta};
+use worki_isolation::{LaunchRequest, Outdated, SessionMeta};
 use worki_pty::chat::{
     Attachment, ChatProtocol, ChatSetting, ClaudeProtocol, CodexOptions, CodexProtocol,
     PermissionAnswer,
@@ -476,16 +476,20 @@ async fn prepare_steps(
         blocking(move || check.backend().ready()).await?;
     }
 
-    let in_use = state
-        .sessions
-        .list()
-        .iter()
-        .any(|s| s.worktree_path == worktree_path && s.state == SessionState::Running);
+    let in_use =
+        state.sessions.list().iter().any(|s| {
+            s.worktree_path == worktree_path && s.state == SessionState::Running && !s.panel
+        });
+    let outdated = if in_use {
+        Outdated::Refuse
+    } else {
+        Outdated::Replace
+    };
     if isolation.is_container() {
         log.step("Getting the worktree's container ready…");
     }
     let (_, home) = projects
-        .grant_access_with(&project, Some(worktree_path), !in_use)
+        .grant_access_with(&project, Some(worktree_path), outdated)
         .await
         .map_err(err)?;
     let with_token = home

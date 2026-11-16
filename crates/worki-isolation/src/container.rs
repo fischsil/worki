@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::{
     check_output, command_path, ensure_relative, ensure_valid_env, file_contents, home_path,
     host_which, pack_home_files, stderr_text, Backend, Check, Fix, Isolation, Launch,
-    LaunchRequest, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
+    LaunchRequest, Outdated, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
 };
 
 /// sbx's kit for every sandbox: agents are installed on first use, not taken from sbx's agent
@@ -1156,8 +1156,15 @@ impl Backend for Container {
                     .made_with()
                     .is_some_and(|made| made != MadeWith::of(ws))
             };
-            if !ws.replace_outdated || !outdated() {
-                return Ok(());
+            match ws.outdated {
+                Outdated::Keep => return Ok(()),
+                _ if !outdated() => return Ok(()),
+                Outdated::Refuse => bail!(
+                    "this worktree's {} was set up for other Claude Code sign-in or folders than \
+                     the project's now, and sessions still run in it. Close them, then start again",
+                    self.engine.noun()
+                ),
+                Outdated::Replace => {}
             }
             self.remove_all(
                 std::slice::from_ref(&name),
@@ -1610,7 +1617,7 @@ mod tests {
             claude_dir: Some("/own".into()),
             claude_login_dir: Some("/acct".into()),
             shared_folder: Some("/shared".into()),
-            replace_outdated: true,
+            outdated: Outdated::Replace,
         };
         let made = MadeWith::of(&ws);
         assert_eq!(made, MadeWith::of(&ws.clone()));
