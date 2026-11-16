@@ -16,6 +16,7 @@ import { Toaster } from "./components/Toaster";
 import { Tooltips } from "./components/Tooltips";
 import { Button } from "./components/ui";
 import { WorktreeView } from "./components/WorktreeView";
+import { useActivityEvents } from "./lib/activities";
 import { api, errorMessage, isolationLabel, type SessionInfo } from "./lib/api";
 import { notify, useAttention } from "./lib/attention";
 import { keys, useAddProject, useIsolationSettings, useProjects, useWorktrees } from "./lib/queries";
@@ -50,6 +51,7 @@ export function App() {
   useAttention();
 
   useFollowSignIns();
+  useActivityEvents();
 
   useTauriEvent("agent-installed", ({ projectId, worktreePath, agent }) =>
     toast(`${agent} was installed in this worktree's environment. Save a snapshot so new worktrees start with it.`, "info", {

@@ -4,6 +4,7 @@ use worki_core::service::ProjectService;
 use worki_core::{secrets, Isolation, IsolationSettings, LogLine};
 use worki_isolation::{Check, Fix, Workspace};
 
+use crate::activity::{track, Scope};
 use crate::{blocking, err, err_chain, AppState, CmdResult};
 
 fn workspace(state: &AppState, project_id: Option<&str>) -> CmdResult<Option<Workspace>> {
@@ -177,11 +178,21 @@ pub async fn set_worktree_isolation(
     choice: worki_core::ProjectIsolation,
 ) -> CmdResult<Isolation> {
     state.close_sessions(|s| s.worktree_path == worktree_path && !s.panel);
-    state
-        .projects
-        .set_worktree_isolation(&project_id, &worktree_path, choice)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path).in_project(&project_id);
+    track(
+        state.app.clone(),
+        "Change isolation",
+        scope,
+        |log| async move {
+            log.step("Replacing the worktree's environment…");
+            state
+                .projects
+                .set_worktree_isolation(&project_id, &worktree_path, choice)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 static BUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -189,6 +200,7 @@ static BUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// Builds the isolation's image, streaming the build output. One build at a time.
 #[tauri::command]
 pub async fn isolation_build_image(
+    state: State<'_, AppState>,
     isolation: Isolation,
     on_log: Channel<LogLine>,
 ) -> CmdResult<()> {
@@ -197,9 +209,13 @@ pub async fn isolation_build_image(
     if BUILDING.swap(true, Ordering::SeqCst) {
         return Err("An image is already being built; wait for it to finish.".into());
     }
-    let result = blocking(move || {
-        isolation.backend().build_image(&mut |line| {
-            on_log.send(LogLine::Stdout(line)).ok();
+    let title = format!("Build image for {}", isolation.label());
+    let result = track(state.app.clone(), title, Scope::default(), |log| {
+        blocking(move || {
+            isolation.backend().build_image(&mut |line| {
+                log.line(LogLine::Stdout(line.clone()));
+                on_log.send(LogLine::Stdout(line)).ok();
+            })
         })
     })
     .await;

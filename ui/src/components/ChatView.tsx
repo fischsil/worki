@@ -60,6 +60,7 @@ import {
   type SessionInfo,
 } from "../lib/api";
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
+import { elapsed, useNow } from "../lib/time";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
 import { ChatVisual, VISUAL_LANGUAGES } from "./ChatVisual";
@@ -261,22 +262,6 @@ function QueuedNote({ session }: { session: SessionInfo }) {
       <ErrorText>{error}</ErrorText>
     </div>
   );
-}
-
-function useNow(active: boolean) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
-}
-
-function elapsed(since: number, now: number): string {
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
 /** The tool call that's running, followed by what its subagent is running, if any. */

@@ -2,6 +2,7 @@
 //! denied from the first folder others couldn't enter (or, where every folder is open, among
 //! your own folders), so granting a path never exposes its siblings.
 
+use crate::trace::Traced;
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -56,6 +57,7 @@ fn chmod(args: &[&str], paths: &[&Path]) -> Result<bool> {
         .args(args)
         .args(paths)
         .stderr(std::process::Stdio::null())
+        .traced()
         .status()
         .context("chmod")?;
     Ok(status.success())
@@ -73,6 +75,7 @@ fn entries(path: &Path) -> Result<Vec<String>> {
     let out = Command::new("/bin/ls")
         .arg("-led")
         .arg(path)
+        .traced()
         .output()
         .context("ls -led")?;
     Ok(String::from_utf8_lossy(&out.stdout)
@@ -104,6 +107,7 @@ fn with_allow(paths: &[PathBuf], user: &str) -> Result<HashSet<PathBuf>> {
         let out = Command::new("/bin/ls")
             .arg("-led")
             .args(chunk)
+            .traced()
             .output()
             .context("ls -led")?;
         let mut current: Option<&PathBuf> = None;
@@ -181,6 +185,7 @@ fn others_can_enter(path: &Path) -> Result<bool> {
 fn current_uid() -> u32 {
     Command::new("/usr/bin/id")
         .arg("-u")
+        .traced()
         .output()
         .ok()
         .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())

@@ -1,3 +1,4 @@
+use crate::trace::Traced;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -10,6 +11,7 @@ pub fn host_which(command: &str) -> Option<String> {
         .args(["-l", "-i", "-c", "command -v \"$1\"", "_", command])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
+        .traced()
         .output()
         .ok()?;
     command_path(&out)

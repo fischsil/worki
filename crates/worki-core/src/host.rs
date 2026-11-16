@@ -255,7 +255,7 @@ async fn local_tool(program: &str) -> Option<PathBuf> {
     }
     let name = program.to_owned();
     let path = PathBuf::from(
-        tokio::task::spawn_blocking(move || host_which(&name))
+        tokio::task::spawn_blocking(crate::trace::carry(move || host_which(&name)))
             .await
             .ok()??,
     );
@@ -264,6 +264,7 @@ async fn local_tool(program: &str) -> Option<PathBuf> {
 }
 
 async fn run(mut cmd: Command) -> Result<Output> {
+    crate::trace::report(&cmd);
     Ok(cmd
         .kill_on_drop(true)
         .stdin(std::process::Stdio::null())

@@ -13,7 +13,9 @@ pub async fn run_logged(
     launch: Launch,
     log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
 ) -> Result<()> {
-    let mut child = Command::from(launch.command())
+    let mut command = Command::from(launch.command());
+    crate::trace::report(&command);
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -40,7 +42,7 @@ pub async fn run_captured(launch: Launch) -> Result<String> {
     let result = run_logged(launch, move |line| match line {
         LogLine::Stdout(l) => o.lock().unwrap().push(l),
         LogLine::Stderr(l) => e.lock().unwrap().push(l),
-        LogLine::Info(_) => {}
+        LogLine::Info(_) | LogLine::Command(_) => {}
     })
     .await;
     let out = out.lock().unwrap().join("\n");

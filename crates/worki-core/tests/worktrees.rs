@@ -75,6 +75,7 @@ async fn project_and_worktree_lifecycle() {
         .unwrap();
     assert_eq!(created.setup_error, None);
     assert_eq!(created.worktree.branch.as_deref(), Some("feature/Login"));
+    assert_eq!(created.worktree.base.as_deref(), Some("main"));
     assert!(created.worktree.path.ends_with("feature-login"));
     assert!(created.worktree.path.join(".setup-done").exists());
     assert!(lines
@@ -140,6 +141,17 @@ async fn project_and_worktree_lifecycle() {
         svc.create_worktree(&project.id, bad_base, |_| {}).await,
         Err(Error::UnknownRef(_))
     ));
+    let bad_name = CreateWorktree {
+        name: "bad..name".into(),
+        base: "main".into(),
+        run_setup: false,
+        isolation: Default::default(),
+    };
+    assert!(matches!(
+        svc.create_worktree(&project.id, bad_name, |_| {}).await,
+        Err(Error::InvalidBranch(_))
+    ));
+    assert!(!root.join("bad..name").exists());
     assert!(wts[0].is_main);
 
     std::fs::write(created.worktree.path.join("README.md"), "changed\nmore\n").unwrap();

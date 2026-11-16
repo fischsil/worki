@@ -156,7 +156,21 @@ export interface SetupScripts {
 export type LogLine =
   | { stream: "info"; line: string }
   | { stream: "stdout"; line: string }
-  | { stream: "stderr"; line: string };
+  | { stream: "stderr"; line: string }
+  | { stream: "command"; line: string };
+
+/** An operation that can take a while, with the steps it logged (see `activity.rs`). */
+export interface Operation {
+  id: number;
+  title: string;
+  projectId: string | null;
+  worktreePath: string | null;
+  status: "running" | "done" | "failed";
+  startedAt: number;
+  finishedAt: number | null;
+  error: string | null;
+  lines: LogLine[];
+}
 
 export interface CreatedWorktree {
   worktree: Worktree;
@@ -483,12 +497,8 @@ export const api = {
   createWorktree: (
     projectId: string,
     req: { name: string; base: string; runSetup: boolean; isolation: ProjectIsolation },
-    onLog: (line: LogLine) => void,
-  ) => {
-    const channel = new Channel<LogLine>();
-    channel.onmessage = onLog;
-    return invoke<CreatedWorktree>("create_worktree", { projectId, req, onLog: channel });
-  },
+  ) => invoke<CreatedWorktree>("create_worktree", { projectId, req }),
+  activities: () => invoke<Operation[]>("activities"),
   removeWorktree: (projectId: string, req: { path: string; force: boolean; deleteBranch: boolean }) =>
     invoke<void>("remove_worktree", { projectId, req }),
   agentSettings: () => invoke<AgentSettings>("agent_settings"),

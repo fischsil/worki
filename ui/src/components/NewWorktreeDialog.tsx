@@ -2,14 +2,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api, errorMessage, isolationLabel, type LogLine, type Project, type ProjectIsolation } from "../lib/api";
+import { api, errorMessage, isolationLabel, type Project, type ProjectIsolation } from "../lib/api";
 import { keys, useBranches, useProjectDefaultIsolation, useSetupScripts } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { toast } from "../lib/toast";
 import { BranchPicker } from "./BranchPicker";
 import { IsolationPicker } from "./IsolationPicker";
-import { Button, Checkbox, Dialog, ErrorText, Field, Input, LogView } from "./ui";
-
-type Phase = "edit" | "running" | "setupFailed";
+import { Button, Checkbox, Dialog, Field, Input } from "./ui";
 
 export function NewWorktreeDialog({ project, onClose }: { project: Project; onClose: () => void }) {
   const qc = useQueryClient();
@@ -38,65 +37,45 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
   const [runSetup, setRunSetup] = useState(true);
   const [isolation, setIsolation] = useState<ProjectIsolation>({ kind: "inherit" });
   const projectDefault = useProjectDefaultIsolation(project);
-  const [phase, setPhase] = useState<Phase>("edit");
-  const [error, setError] = useState<string | null>(null);
-  const [log, setLog] = useState<LogLine[]>([]);
 
   const branch = branchName(name);
   const nameTaken = branches.includes(branch);
   const localBranches = branches.filter((b) => !b.startsWith("origin/"));
-  const canSubmit = !!branch && !nameTaken && !!base && phase === "edit";
+  const canSubmit = !!branch && !nameTaken && !!base;
 
   useEffect(() => {
     if (branches.length > 0 && !branches.includes(base)) setBase(localBranches[0] ?? branches[0]);
   }, [branches]);
 
+  /** Closes at once: the Activity panel and the worktree's row show how it goes. */
   async function submit() {
     if (!canSubmit) return;
-    setPhase("running");
-    setError(null);
-    setLog([]);
+    onClose();
     try {
-      const res = await api.createWorktree(
-        project.id,
-        { name, base, runSetup: runSetup && !!setupScript, isolation },
-        (line) => setLog((l) => [...l, line]),
-      );
+      const res = await api.createWorktree(project.id, { name, base, runSetup: runSetup && !!setupScript, isolation });
       await qc.invalidateQueries({ queryKey: keys.worktrees(project.id) });
       qc.invalidateQueries({ queryKey: keys.branches(project.id) });
       select(project.id, res.worktree.path);
-      if (res.setupError) {
-        setError(`Worktree created, but the setup script failed: ${res.setupError}`);
-        setPhase("setupFailed");
-      } else {
-        onClose();
-      }
+      if (res.setupError) toast(`Worktree ${branch} was created, but its setup script failed. See Activity for its output.`);
     } catch (e) {
-      setError(errorMessage(e));
-      setPhase("edit");
+      toast(`Couldn't create worktree ${branch}: ${errorMessage(e)}`);
     }
   }
 
   return (
     <Dialog
       title={`New worktree · ${project.name}`}
-      onClose={phase === "running" ? () => {} : onClose}
+      onClose={onClose}
       width={520}
       footer={
-        phase === "setupFailed" ? (
-          <Button variant="primary" onClick={onClose}>
-            Close
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
           </Button>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={onClose} disabled={phase === "running"}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={submit} disabled={!canSubmit}>
-              {phase === "running" ? "Creating…" : "Create worktree"}
-            </Button>
-          </>
-        )
+          <Button variant="primary" onClick={submit} disabled={!canSubmit}>
+            Create worktree
+          </Button>
+        </>
       }
     >
       <form
@@ -113,13 +92,12 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
                 value={base}
                 branches={branches.length > 0 ? branches : [base]}
                 onChange={setBase}
-                disabled={phase !== "edit"}
               />
             </div>
             <Button
               type="button"
               onClick={fetchLatest}
-              disabled={fetching || phase !== "edit"}
+              disabled={fetching}
               title="Fetch the latest branches from the remote"
               className="h-8"
             >
@@ -153,7 +131,6 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="feature/my-change"
-            disabled={phase !== "edit"}
           />
         </Field>
         {!project.remote && (
@@ -167,7 +144,7 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
             />
           </Field>
         )}
-        <Checkbox checked={runSetup && !!setupScript} onChange={setRunSetup} disabled={!setupScript || phase !== "edit"}>
+        <Checkbox checked={runSetup && !!setupScript} onChange={setRunSetup} disabled={!setupScript}>
           <span className="flex flex-col gap-0.5">
             <span>Run setup script</span>
             <span className="text-xs text-faint">
@@ -182,8 +159,6 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
         <button type="submit" hidden />
       </form>
 
-      {log.length > 0 && <LogView lines={log} className="max-h-56 bg-panel" />}
-      <ErrorText>{error}</ErrorText>
     </Dialog>
   );
 }

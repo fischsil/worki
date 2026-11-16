@@ -3,6 +3,7 @@
 //! pointers resolve unchanged inside; git metadata that could make the human's own git run
 //! agent-written code is mounted read-only.
 
+use crate::trace::Traced;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -174,7 +175,7 @@ impl Container {
         args: impl IntoIterator<Item = impl AsRef<OsStr>>,
         what: &str,
     ) -> Result<String> {
-        let out = check_output(self.command()?.args(args).output()?, what)?;
+        let out = check_output(self.command()?.args(args).traced().output()?, what)?;
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
@@ -184,7 +185,7 @@ impl Container {
         let Ok(mut cmd) = self.command() else {
             return true;
         };
-        match cmd.args(["--no-input", "policy", "ls"]).output() {
+        match cmd.args(["--no-input", "policy", "ls"]).traced().output() {
             Ok(out) if !out.status.success() => !policy_missing(&format!(
                 "{}{}",
                 String::from_utf8_lossy(&out.stdout),
@@ -206,7 +207,10 @@ impl Container {
         for (command, flags) in SBX_USES {
             let mut args = command.to_vec();
             args.push("--help");
-            match self.command().and_then(|mut c| Ok(c.args(&args).output()?)) {
+            match self
+                .command()
+                .and_then(|mut c| Ok(c.args(&args).traced().output()?))
+            {
                 Ok(out) if out.status.success() => {
                     let help = String::from_utf8_lossy(&out.stdout);
                     let missing = missing_flags(&help, flags);
@@ -388,9 +392,9 @@ impl Container {
         .args(args);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let Some(feed) = stdin else {
-            return Ok(cmd.output()?);
+            return Ok(cmd.traced().output()?);
         };
-        let mut child = cmd.stdin(Stdio::piped()).spawn()?;
+        let mut child = cmd.stdin(Stdio::piped()).traced().spawn()?;
         let mut input = child.stdin.take().context("stdin")?;
         feed(&mut input)?;
         drop(input);
@@ -426,6 +430,7 @@ impl Container {
                 "-c",
                 &script,
             ])
+            .traced()
             .output()?)
         });
         match out {
@@ -443,6 +448,7 @@ impl Container {
         self.engine == Engine::Sbx
             || self.command().is_ok_and(|mut c| {
                 c.args(["image", "inspect", &self.image])
+                    .traced()
                     .output()
                     .is_ok_and(|o| o.status.success())
             })
@@ -455,12 +461,14 @@ impl Container {
         match self.engine {
             Engine::Sbx => cmd
                 .args(["daemon", "status"])
+                .traced()
                 .output()
                 .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("running")),
             _ => cmd
                 .arg("info")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
+                .traced()
                 .status()
                 .is_ok_and(|s| s.success()),
         }
@@ -471,7 +479,11 @@ impl Container {
 /// when the command does.
 fn stream_lines(cmd: &mut Command, log: &mut dyn FnMut(String)) -> Result<()> {
     use std::io::BufRead;
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .traced()
+        .spawn()?;
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let readers: Vec<_> = [
         child
@@ -1477,7 +1489,11 @@ impl Backend for Container {
             "tar -xf - --no-same-owner",
             &[],
             Some(Box::new(move |stdin| {
-                let mut pack = pack.stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+                let mut pack = pack
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .traced()
+                    .spawn()?;
                 std::io::copy(&mut pack.stdout.take().expect("piped"), stdin)?;
                 pack.wait()?;
                 Ok(())

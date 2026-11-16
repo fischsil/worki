@@ -13,6 +13,7 @@ pub mod secrets;
 pub mod service;
 pub mod setup;
 pub mod store;
+pub mod trace;
 
 pub use error::{Error, Result};
 pub use host::Host;

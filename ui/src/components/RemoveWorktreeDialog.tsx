@@ -1,11 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { api, type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { api, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { keys, useWorktrees, useWorktreeStatus } from "../lib/queries";
 import { useUi } from "../lib/store";
-import { useAsyncAction } from "../lib/useAsyncAction";
-import { Button, Checkbox, Dialog, ErrorText, WarnText } from "./ui";
+import { toast } from "../lib/toast";
+import { Button, Checkbox, Dialog, WarnText } from "./ui";
 
 export function RemoveWorktreeDialog({
   project,
@@ -37,23 +37,19 @@ function RemoveWorktreeForm({
 
   const [deleteBranch, setDeleteBranch] = useState(true);
   const [force, setForce] = useState(true);
-  const { busy, error, run } = useAsyncAction();
 
-  const remove = () =>
-    run(async () => {
-      try {
-        await api.removeWorktree(project.id, {
-          path: worktree.path,
-          force,
-          deleteBranch: deleteBranch && !!worktree.branch,
-        });
-        if (selectedWorktreePath === worktree.path) select(project.id, project.repoPath);
-        onClose();
-      } finally {
-        qc.invalidateQueries({ queryKey: keys.worktrees(project.id) });
-        qc.invalidateQueries({ queryKey: keys.branches(project.id) });
-      }
-    });
+  async function remove() {
+    if (selectedWorktreePath === worktree.path) select(project.id, project.repoPath);
+    onClose();
+    try {
+      await api.removeWorktree(project.id, { path: worktree.path, force, deleteBranch: deleteBranch && !!worktree.branch });
+    } catch (e) {
+      toast(`Couldn't remove ${worktreeLabel(worktree)}: ${errorMessage(e)}`);
+    } finally {
+      qc.invalidateQueries({ queryKey: keys.worktrees(project.id) });
+      qc.invalidateQueries({ queryKey: keys.branches(project.id) });
+    }
+  }
 
   return (
     <Dialog
@@ -64,8 +60,8 @@ function RemoveWorktreeForm({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={remove} disabled={busy || (dirty > 0 && !force)}>
-            {busy ? "Removing…" : "Remove"}
+          <Button variant="danger" onClick={remove} disabled={dirty > 0 && !force}>
+            Remove
           </Button>
         </>
       }
@@ -91,7 +87,6 @@ function RemoveWorktreeForm({
           <span className="text-xs text-faint">Discard uncommitted changes and delete unmerged branches.</span>
         </span>
       </Checkbox>
-      <ErrorText>{error}</ErrorText>
     </Dialog>
   );
 }

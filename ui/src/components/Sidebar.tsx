@@ -45,12 +45,14 @@ import {
   useWorktrees,
   useWorktreeStatus,
 } from "../lib/queries";
+import { lastStep, useWorktreeActivity } from "../lib/activities";
 import { useKeepAwake } from "../lib/awake";
 import { useUi } from "../lib/store";
 import { plural } from "../lib/text";
 import { toast } from "../lib/toast";
 import { installUpdate, useUpdates } from "../lib/updates";
 import { ActivityDot, summarize } from "./ActivityDot";
+import { ActivityButton } from "./ActivityPanel";
 import { PrStateIcon } from "./BranchPanel";
 import { AgentDot } from "./Playful";
 import { ResizeHandle } from "./ResizeHandle";
@@ -101,7 +103,7 @@ export function Sidebar() {
           </p>
         )}
       </nav>
-      <div className="flex shrink-0 items-center border-t border-line px-2 py-1.5">
+      <div className="relative flex shrink-0 items-center border-t border-line px-2 py-1.5">
         <button
           onClick={() => openDialog({ kind: "settings", tab: "general" })}
           title="Settings (⌘,)"
@@ -110,6 +112,7 @@ export function Sidebar() {
           <Settings size={14} />
           Settings
         </button>
+        <ActivityButton />
         <KeepAwakeButton />
         <UpdateButton />
       </div>
@@ -220,6 +223,7 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
   const { data: sessions = [] } = useSessions();
   const { data: pr } = usePullRequest(worktree.path, showPullRequests && !worktree.isMain && !!worktree.branch);
   const comments = useWorktreeComments(worktree.path).length;
+  const busy = useWorktreeActivity(worktree.path);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
 
   const dirty = status?.changedFiles.length ?? 0;
@@ -253,6 +257,11 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
       {pr && checksFailed(pr) && (
         <Hint title={`${plural(pr.checksFailed, "check")} failed on #${pr.number}`} className="text-removed">
           <CircleX size={12} />
+        </Hint>
+      )}
+      {busy && (
+        <Hint title={`${busy.title}: ${lastStep(busy) ?? "working…"}`} className="text-muted">
+          <LoaderCircle size={12} className="animate-spin" />
         </Hint>
       )}
       {agents.length > 0 ? (

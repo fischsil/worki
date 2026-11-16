@@ -11,6 +11,7 @@ use worki_core::{agents, paths, ClaudeAccount};
 use worki_isolation::account_launch;
 use worki_pty::{Captured, PtyInput};
 
+use crate::activity::{track, Scope};
 use crate::{blocking, err, AppState, CmdResult};
 
 /// Sign-ins in progress, by account id: where the code the user pastes goes. Each has a number,
@@ -59,7 +60,17 @@ pub async fn remove_claude_account(
     state: State<'_, AppState>,
     id: String,
 ) -> CmdResult<Option<String>> {
-    let warnings = state.projects.remove_account(&id).await.map_err(err)?;
+    let scope = Scope::default();
+    let warnings = track(
+        state.app.clone(),
+        "Remove account",
+        scope,
+        |log| async move {
+            log.step("Removing the environments of the projects that use it…");
+            state.projects.remove_account(&id).await.map_err(err)
+        },
+    )
+    .await?;
     Ok((!warnings.is_empty()).then(|| warnings.join("\n")))
 }
 

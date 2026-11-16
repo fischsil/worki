@@ -364,6 +364,54 @@ const apps = [
 
 const check = (id: string, label: string) => ({ id, label, ok: true, detail: null, fix: null });
 
+const info = (line: string) => ({ stream: "info", line });
+const at = (agoMs: number) => Date.now() - agoMs;
+const activities = [
+  {
+    id: 3,
+    title: "Start Claude Code",
+    projectId: "infra",
+    worktreePath: staging,
+    status: "running",
+    startedAt: at(9_000),
+    finishedAt: null,
+    error: null,
+    lines: [
+      info("Checking Docker Sandboxes is ready…"),
+      { stream: "command", line: "sbx version" },
+      info("Getting the worktree's container ready…"),
+      { stream: "command", line: "sbx ls --json" },
+      { stream: "command", line: "sbx run -d worki-infra-feat-staging-cluster" },
+      info("Checking Claude Code is installed…"),
+      { stream: "command", line: "sbx exec worki-infra-feat-staging-cluster bash -lc 'command -v claude'" },
+      info("Claude Code isn't installed here yet. Installing it…"),
+      { stream: "command", line: "sbx exec worki-infra-feat-staging-cluster bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'" },
+    ],
+  },
+  {
+    id: 2,
+    title: "Create worktree fix/login-race",
+    projectId: "acme-web",
+    worktreePath: login,
+    status: "done",
+    startedAt: at(120_000),
+    finishedAt: at(112_000),
+    error: null,
+    lines: [info("Creating worktree fix/login-race from main…"), info("Running setup script as you…"), { stream: "stdout", line: "added 812 packages in 6s" }, info("Done.")],
+  },
+  {
+    id: 1,
+    title: "Save snapshot node-22",
+    projectId: "payments-api",
+    worktreePath: refunds,
+    status: "failed",
+    startedAt: at(600_000),
+    finishedAt: at(559_000),
+    error: "docker commit: no space left on device",
+    lines: [info("Saving the worktree's environment as an image…")],
+  },
+];
+
 function handle(cmd: string, args: Record<string, any>): unknown {
   switch (cmd) {
     case "list_projects":
@@ -425,6 +473,8 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       agentSettings = { ...agentSettings, projectAccounts };
       return null;
     }
+    case "activities":
+      return activities;
     case "keep_awake":
       return keepAwake;
     case "set_keep_awake":

@@ -5,6 +5,7 @@ import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
+  type RefObject,
   type SelectHTMLAttributes,
   type ComponentProps,
   createContext,
@@ -229,21 +230,27 @@ interface MenuItem {
   onSelect: () => void;
 }
 
+/** Calls `onClose` on a click outside `ref` or on Escape, while `open`. */
+export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, onClose: () => void) {
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const click = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && latest.current();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && latest.current();
+    window.addEventListener("mousedown", click);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", click);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [ref, open]);
+}
+
 export function Menu({ trigger, items }: { trigger: (open: () => void) => ReactNode; items: MenuItem[] }) {
   const [isOpen, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [isOpen]);
+  useDismiss(ref, isOpen, () => setOpen(false));
 
   return (
     <div ref={ref} className="relative">
@@ -361,10 +368,13 @@ export function DiffStat({
 
 /** Streamed command output that keeps scrolled to the newest line. */
 export function LogView({ lines, className }: { lines: LogLine[]; className?: string }) {
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [lines]);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (box.current) box.current.scrollTop = box.current.scrollHeight;
+  }, [lines]);
   return (
     <div
+      ref={box}
       className={clsx(
         "selectable overflow-y-auto rounded-md border border-line p-2 font-mono text-[11px] leading-relaxed",
         className,
@@ -377,12 +387,12 @@ export function LogView({ lines, className }: { lines: LogLine[]; className?: st
             "break-all whitespace-pre-wrap",
             l.stream === "info" && "text-accent",
             l.stream === "stderr" && "text-muted",
+            l.stream === "command" && "text-faint",
           )}
         >
-          {l.line}
+          {l.stream === "command" ? `$ ${l.line}` : l.line}
         </div>
       ))}
-      <div ref={end} />
     </div>
   );
 }

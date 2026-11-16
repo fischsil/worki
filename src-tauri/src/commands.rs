@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use tauri::ipc::Channel;
 use tauri::State;
 use worki_core::service::{CreatedWorktree, SetupScripts};
 use worki_core::*;
 use worki_isolation::ssh;
 
+use crate::activity::{track, Scope};
 use crate::{blocking, err, err_chain, AppState, CmdResult};
 
 #[tauri::command]
@@ -15,7 +15,16 @@ pub fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<Project>> {
 
 #[tauri::command]
 pub async fn add_project(state: State<'_, AppState>, path: PathBuf) -> CmdResult<Project> {
-    state.projects.add_project(&path).await.map_err(err)
+    track(
+        state.app.clone(),
+        "Add project",
+        Scope::default(),
+        |log| async move {
+            log.step(format!("Reading {}…", path.display()));
+            state.projects.add_project(&path).await.map_err(err)
+        },
+    )
+    .await
 }
 
 /// `password`, when given, is stored in the Keychain vault before connecting.
@@ -38,11 +47,20 @@ pub async fn add_remote_project(
     if let Some(password) = password.as_deref().filter(|p| !p.is_empty()) {
         ssh::set_password(&remote.target(), Some(password)).map_err(err_chain)?;
     }
-    state
-        .projects
-        .add_remote_project(remote, &path)
-        .await
-        .map_err(err)
+    track(
+        state.app.clone(),
+        "Add remote project",
+        Scope::default(),
+        |log| async move {
+            log.step(format!("Connecting to {}…", remote.host));
+            state
+                .projects
+                .add_remote_project(remote, &path)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 /// Keeps a remote project's stored password when its host, user or port change.
@@ -129,7 +147,17 @@ pub fn set_ssh_password(
 pub async fn remove_project(state: State<'_, AppState>, id: String) -> CmdResult<Option<String>> {
     let project = state.projects.project(&id).map_err(err)?;
     state.close_sessions(|s| project.contains(&s.worktree_path));
-    state.projects.remove_project(&id).await.map_err(err)
+    let title = format!("Remove project {}", project.name);
+    track(
+        state.app.clone(),
+        title,
+        Scope::default(),
+        |log| async move {
+            log.step("Removing the worktrees' environments…");
+            state.projects.remove_project(&id).await.map_err(err)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -207,11 +235,11 @@ pub async fn delete_snapshot(
     engine: SnapshotEngine,
     name: String,
 ) -> CmdResult<()> {
-    state
-        .projects
-        .delete_snapshot(engine, &name)
-        .await
-        .map_err(err)
+    let title = format!("Delete snapshot {name}");
+    track(state.app.clone(), title, Scope::default(), |_| async move {
+        state.projects.delete_snapshot(engine, &name).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -222,11 +250,21 @@ pub async fn save_environment_template(
     tag: String,
     use_for_project: bool,
 ) -> CmdResult<Project> {
-    state
-        .projects
-        .save_environment_template(&project_id, &worktree_path, &tag, use_for_project)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path).in_project(&project_id);
+    track(
+        state.app.clone(),
+        format!("Save snapshot {tag}"),
+        scope,
+        |log| async move {
+            log.step("Saving the worktree's environment as an image…");
+            state
+                .projects
+                .save_environment_template(&project_id, &worktree_path, &tag, use_for_project)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -236,11 +274,14 @@ pub async fn commit_changes(
     files: Vec<String>,
     message: String,
 ) -> CmdResult<String> {
-    state
-        .projects
-        .commit(&worktree_path, &files, &message)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(state.app.clone(), "Commit", scope, |_| async move {
+        state
+            .projects
+            .commit(&worktree_path, &files, &message)
+            .await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -262,11 +303,20 @@ pub async fn update_from_base(
     worktree_path: PathBuf,
     base: String,
 ) -> CmdResult<BaseUpdate> {
-    state
-        .projects
-        .update_from_base(&worktree_path, &base)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(
+        state.app.clone(),
+        format!("Update from {base}"),
+        scope,
+        |_| async move {
+            state
+                .projects
+                .update_from_base(&worktree_path, &base)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -289,11 +339,20 @@ pub async fn draft_pull_request(
     instructions: String,
     writer: Writer,
 ) -> CmdResult<PrDraft> {
-    state
-        .projects
-        .draft_pull_request(&worktree_path, &base, &instructions, &writer)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(
+        state.app.clone(),
+        "Draft pull request",
+        scope,
+        |_| async move {
+            state
+                .projects
+                .draft_pull_request(&worktree_path, &base, &instructions, &writer)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -304,11 +363,14 @@ pub async fn draft_commits(
     instructions: String,
     writer: Writer,
 ) -> CmdResult<Vec<CommitDraft>> {
-    state
-        .projects
-        .draft_commits(&worktree_path, &files, &instructions, &writer)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(state.app.clone(), "Draft commits", scope, |_| async move {
+        state
+            .projects
+            .draft_commits(&worktree_path, &files, &instructions, &writer)
+            .await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -320,11 +382,20 @@ pub async fn create_pull_request(
     body: String,
     draft: bool,
 ) -> CmdResult<PullRequest> {
-    state
-        .projects
-        .create_pull_request(&worktree_path, &base, &title, &body, draft)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(
+        state.app.clone(),
+        "Create pull request",
+        scope,
+        |_| async move {
+            state
+                .projects
+                .create_pull_request(&worktree_path, &base, &title, &body, draft)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -342,12 +413,20 @@ pub async fn compare_base(
 
 #[tauri::command]
 pub async fn fetch_remote(state: State<'_, AppState>, worktree_path: PathBuf) -> CmdResult<()> {
-    state.projects.fetch(&worktree_path).await.map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(state.app.clone(), "Fetch", scope, |_| async move {
+        state.projects.fetch(&worktree_path).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn push_branch(state: State<'_, AppState>, worktree_path: PathBuf) -> CmdResult<()> {
-    state.projects.push(&worktree_path).await.map_err(err)
+    let scope = Scope::worktree(&worktree_path);
+    track(state.app.clone(), "Push", scope, |_| async move {
+        state.projects.push(&worktree_path).await
+    })
+    .await
 }
 
 /// A GitHub attachment from a review comment, as a `data:` URL.
@@ -408,15 +487,26 @@ pub async fn create_worktree(
     state: State<'_, AppState>,
     project_id: String,
     req: CreateWorktree,
-    on_log: Channel<LogLine>,
 ) -> CmdResult<CreatedWorktree> {
-    state
-        .projects
-        .create_worktree(&project_id, req, move |line| {
-            on_log.send(line).ok();
-        })
-        .await
-        .map_err(err)
+    let title = format!("Create worktree {}", req.name);
+    let project = state.projects.project(&project_id).map_err(err)?;
+    let path = ProjectService::new_worktree_path(&project, &req.name);
+    let scope = Scope::worktree(path).in_project(&project_id);
+    track(state.app.clone(), title, scope, |log| async move {
+        let created = state
+            .projects
+            .create_worktree(&project_id, req, {
+                let log = log.clone();
+                move |line| log.line(line)
+            })
+            .await
+            .map_err(err)?;
+        if let Some(e) = &created.setup_error {
+            log.fail(format!("The setup script failed: {e}"));
+        }
+        Ok::<_, String>(created)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -426,11 +516,21 @@ pub async fn remove_worktree(
     req: RemoveWorktree,
 ) -> CmdResult<()> {
     state.close_sessions(|s| s.worktree_path == req.path);
-    state
-        .projects
-        .remove_worktree(&project_id, req)
-        .await
-        .map_err(err)
+    let scope = Scope::worktree(&req.path).in_project(&project_id);
+    track(
+        state.app.clone(),
+        "Remove worktree",
+        scope,
+        |log| async move {
+            log.step("Removing the worktree and its environment…");
+            state
+                .projects
+                .remove_worktree(&project_id, req)
+                .await
+                .map_err(err)
+        },
+    )
+    .await
 }
 
 #[tauri::command]

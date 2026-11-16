@@ -26,17 +26,23 @@ pub async fn main_checkout(host: &Host, path: &Path) -> Result<PathBuf> {
 }
 
 pub async fn list_worktrees(host: &Host, repo: &Path) -> Result<Vec<Worktree>> {
-    let (listing, bases, created) = tokio::join!(
-        host.git(repo, ["worktree", "list", "--porcelain"]),
+    let (worktrees, bases, created) = tokio::join!(
+        worktrees(host, repo),
         branch_bases(host, repo),
         worktree_creation_times(host, repo)
     );
-    let mut worktrees = parse_worktree_porcelain(&listing?);
+    let mut worktrees = worktrees?;
     for wt in &mut worktrees {
         wt.base = wt.branch.as_ref().and_then(|b| bases.get(b).cloned());
     }
     sort_newest_first(&mut worktrees, &created);
     Ok(worktrees)
+}
+
+/// The repository's worktrees as git lists them, without their bases, in git's order.
+pub async fn worktrees(host: &Host, repo: &Path) -> Result<Vec<Worktree>> {
+    let listing = host.git(repo, ["worktree", "list", "--porcelain"]).await?;
+    Ok(parse_worktree_porcelain(&listing))
 }
 
 /// Keeps the main checkout on top, then the newest worktree first.
@@ -206,13 +212,6 @@ pub async fn ref_exists(host: &Host, repo: &Path, name: &str) -> bool {
     .is_ok()
 }
 
-pub async fn validate_branch_name(host: &Host, repo: &Path, branch: &str) -> Result<()> {
-    host.git(repo, ["check-ref-format", "--branch", branch])
-        .await
-        .map(drop)
-        .map_err(|_| Error::InvalidBranch(branch.into()))
-}
-
 pub async fn list_branches(host: &Host, repo: &Path) -> Result<Vec<String>> {
     let out = host
         .git(
@@ -255,6 +254,12 @@ pub async fn add_worktree(
     )
     .await
     .map(drop)
+    .map_err(|e| match e {
+        Error::Git { stderr, .. } if stderr.contains("is not a valid branch name") => {
+            Error::InvalidBranch(new_branch.into())
+        }
+        e => e,
+    })
 }
 
 pub async fn remove_worktree(host: &Host, repo: &Path, path: &Path, force: bool) -> Result<()> {

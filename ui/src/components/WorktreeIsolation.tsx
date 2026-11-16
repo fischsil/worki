@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import {
   api,
+  errorMessage,
   isContainer,
   type Isolation,
   isolationLabel,
@@ -12,6 +13,7 @@ import {
   type Project,
   type ProjectIsolation,
   type Worktree,
+  worktreeLabel,
 } from "../lib/api";
 import {
   keys,
@@ -21,10 +23,10 @@ import {
   useWorktreeIsolation,
 } from "../lib/queries";
 import { useUi } from "../lib/store";
-import { useAsyncAction } from "../lib/useAsyncAction";
+import { toast } from "../lib/toast";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
-import { Button, Dialog, ErrorText, Field, WarnText } from "./ui";
+import { Button, Dialog, Field, WarnText } from "./ui";
 
 /** Where this worktree's agents run, once the settings have loaded. */
 export function useEffectiveIsolation(project: Project, worktree: Worktree): Isolation | undefined {
@@ -84,26 +86,24 @@ function WorktreeIsolationDialog({
   const qc = useQueryClient();
   const openDialog = useUi((s) => s.openDialog);
   const [choice, setChoice] = useState<ProjectIsolation>(current);
-  const { busy: saving, error, run } = useAsyncAction();
   const { data: sessions = [] } = useSessions();
   const projectDefault = useProjectDefaultIsolation(project);
   const effective = choice.kind === "inherit" ? projectDefault : choice;
   const running = sessions.filter((s) => s.worktreePath === worktree.path && s.state.kind === "running").length;
   const changed = JSON.stringify(choice) !== JSON.stringify(current);
 
-  const save = () =>
-    run(async () => {
-      try {
-        await api.setWorktreeIsolation(project.id, worktree.path, choice);
-        onClose();
-      } finally {
-        await Promise.all([
-          qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) }),
-          qc.invalidateQueries({ queryKey: keys.sessions }),
-        qc.invalidateQueries({ queryKey: ["environmentTemplates"] }),
-        ]);
-      }
-    });
+  async function save() {
+    onClose();
+    try {
+      await api.setWorktreeIsolation(project.id, worktree.path, choice);
+    } catch (e) {
+      toast(`Couldn't change the isolation of ${worktreeLabel(worktree)}: ${errorMessage(e)}`);
+    } finally {
+      qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) });
+      qc.invalidateQueries({ queryKey: keys.sessions });
+      qc.invalidateQueries({ queryKey: ["environmentTemplates"] });
+    }
+  }
 
   return (
     <Dialog
@@ -115,8 +115,8 @@ function WorktreeIsolationDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={save} disabled={!changed || saving}>
-            {saving ? "Applying…" : "Apply"}
+          <Button variant="primary" onClick={save} disabled={!changed}>
+            Apply
           </Button>
         </>
       }
@@ -156,7 +156,6 @@ function WorktreeIsolationDialog({
       {effective && effective.kind !== "none" && effective.kind !== "ssh" && (
         <DoctorPanel key={JSON.stringify(effective)} isolation={effective} projectId={project.id} />
       )}
-      <ErrorText>{error}</ErrorText>
     </Dialog>
   );
 }

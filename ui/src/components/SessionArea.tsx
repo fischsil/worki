@@ -14,8 +14,8 @@ import {
   skipPermissionsFlag,
   type Worktree,
 } from "../lib/api";
+import { lastStep, useWorktreeActivity } from "../lib/activities";
 import { onCommand } from "../lib/commands";
-import { useTauriEvent } from "../lib/events";
 import { useCopy } from "../lib/useCopy";
 import { type PendingSignIn, useSignIns } from "../lib/signIns";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
@@ -39,15 +39,9 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const setActive = useUi((s) => s.setActiveSession);
   const agentView = useUi((s) => s.agentView);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState<string | null>(null);
-
-  useTauriEvent(
-    "agent-installing",
-    ({ worktreePath, agent }) => {
-      if (worktreePath === worktree.path) setStarting(`${agent} isn't installed here yet. Installing it…`);
-    },
-    starting !== null,
-  );
+  const [pending, setPending] = useState<string | null>(null);
+  const busy = useWorktreeActivity(worktree.path);
+  const starting = pending && ((busy && lastStep(busy)) ?? pending);
 
   const sessions = allSessions.filter((s) => s.worktreePath === worktree.path);
   const active = sessions.find((s) => s.id === activeId) ?? sessions[sessions.length - 1];
@@ -59,7 +53,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
       setError(null);
       const profile = profiles.find((p) => p.id === profileId);
       const chat = !!profile && canChat(profile) && (kind ?? agentView) === "chat";
-      setStarting(resumeId ? "Resuming…" : `Starting ${profile?.name ?? "shell"}…`);
+      setPending(resumeId ? "Resuming…" : `Starting ${profile?.name ?? "shell"}…`);
       try {
         const info = chat
           ? await api.spawnChatSession(project.id, worktree.path, profile.id, resumeId)
@@ -71,7 +65,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
       } catch (e) {
         setError(errorMessage(e));
       } finally {
-        setStarting(null);
+        setPending(null);
       }
     },
     [project.id, worktree.path, qc, setActive, profiles, agentView],

@@ -9,7 +9,9 @@ use worki_core::launch::{
     chat_history_command, chat_request, continue_command, resumes, session_env, session_request,
     ChatAgent, ClaudeOptions, CHAT_PROMPT,
 };
-use worki_core::{secrets, AgentProfile, Host, Isolation, JsonObject, Project, SavedSession};
+use worki_core::{
+    secrets, AgentProfile, AgentSettings, Host, Isolation, JsonObject, Project, SavedSession,
+};
 use worki_isolation::ssh::{Ssh, SshTarget};
 use worki_isolation::{LaunchRequest, SessionMeta};
 use worki_pty::chat::{
@@ -18,6 +20,7 @@ use worki_pty::chat::{
 };
 use worki_pty::{ChatSpec, SessionInfo, SessionState, SpawnSpec};
 
+use crate::activity::{track, Log, Scope};
 use crate::{blocking, err, AppState, CmdResult};
 
 #[tauri::command]
@@ -357,18 +360,9 @@ struct Prepared {
 
 /// Names of the events the session start sends; `ui/src/lib/events.ts` has the same.
 pub mod events {
-    pub const AGENT_INSTALLING: &str = "agent-installing";
     pub const AGENT_INSTALLED: &str = "agent-installed";
     pub const AGENT_SIGN_IN: &str = "agent-sign-in";
     pub const AGENT_SIGNED_IN: &str = "agent-signed-in";
-}
-
-/// The worktree's agent isn't installed where it runs and is being installed before it starts.
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentInstalling {
-    worktree_path: PathBuf,
-    agent: String,
 }
 
 /// Lets the worktree offer a snapshot after its agent was installed into its environment.
@@ -389,6 +383,7 @@ async fn ready_agent(
     worktree: &Path,
     isolation: &Isolation,
     profile: &AgentProfile,
+    log: &Log,
 ) -> CmdResult<()> {
     let Some(executable) = profile.executable() else {
         return Ok(());
@@ -401,14 +396,12 @@ async fn ready_agent(
         .agent_instance(project, worktree, isolation)
         .await
         .map_err(err)?;
-    let (app, agent) = (state.app.clone(), profile.name.clone());
-    let installing = AgentInstalling {
-        worktree_path: worktree.to_owned(),
-        agent: agent.clone(),
-    };
+    let agent = profile.name.clone();
+    log.step(format!("Checking {agent} is installed…"));
     let installed = projects
-        .ensure_agent(instance.clone(), isolation, executable, move || {
-            app.emit(events::AGENT_INSTALLING, installing).ok();
+        .ensure_agent(instance.clone(), isolation, executable, {
+            let log = log.clone();
+            move |line| log.line(line)
         })
         .await
         .map_err(err)?;
@@ -421,6 +414,7 @@ async fn ready_agent(
         state.app.emit(events::AGENT_INSTALLED, event).ok();
     }
     if isolation.is_confined() {
+        log.step(format!("Trusting the worktree for {agent}…"));
         projects
             .trust_worktree(instance.clone(), executable, worktree)
             .await
@@ -432,6 +426,7 @@ async fn ready_agent(
     Ok(())
 }
 
+/// Gets the worktree's environment and agent ready for a session, as an activity.
 async fn prepare(
     state: &AppState,
     project_id: &str,
@@ -439,9 +434,7 @@ async fn prepare(
     profile_id: Option<&str>,
     id: Option<String>,
 ) -> CmdResult<Prepared> {
-    let projects = &state.projects;
-    let project = projects.project(project_id).map_err(err)?;
-    let settings = projects.agent_settings().map_err(err)?;
+    let settings = state.projects.agent_settings().map_err(err)?;
     let profile = profile_id
         .map(|id| {
             settings
@@ -450,6 +443,26 @@ async fn prepare(
                 .ok_or_else(|| format!("unknown agent profile {id}"))
         })
         .transpose()?;
+    let name = profile.as_ref().map_or("shell", |p| p.name.as_str());
+    let title = format!("Start {name}");
+    let scope = Scope::worktree(worktree_path).in_project(project_id);
+    track(state.app.clone(), title, scope, |log| {
+        prepare_steps(state, project_id, worktree_path, settings, profile, id, log)
+    })
+    .await
+}
+
+async fn prepare_steps(
+    state: &AppState,
+    project_id: &str,
+    worktree_path: &Path,
+    settings: AgentSettings,
+    profile: Option<AgentProfile>,
+    id: Option<String>,
+    log: Log,
+) -> CmdResult<Prepared> {
+    let projects = &state.projects;
+    let project = projects.project(project_id).map_err(err)?;
 
     let isolation = projects
         .isolation_for_worktree(&project, worktree_path)
@@ -457,11 +470,9 @@ async fn prepare(
     isolation.validate().map_err(err)?;
 
     if isolation != Isolation::None {
+        log.step(format!("Checking {} is ready…", isolation.label()));
         let check = isolation.clone();
-        tauri::async_runtime::spawn_blocking(move || check.backend().ready())
-            .await
-            .map_err(err)?
-            .map_err(err)?;
+        blocking(move || check.backend().ready()).await?;
     }
 
     let in_use = state
@@ -469,13 +480,17 @@ async fn prepare(
         .list()
         .iter()
         .any(|s| s.worktree_path == worktree_path && s.state == SessionState::Running);
+    if isolation.is_container() {
+        log.step("Getting the worktree's container ready…");
+    }
     projects
         .grant_access_with(&project, Some(worktree_path), !in_use)
         .await
         .map_err(err)?;
     if let Some(p) = &profile {
-        ready_agent(state, &project, worktree_path, &isolation, p).await?;
+        ready_agent(state, &project, worktree_path, &isolation, p, &log).await?;
         if settings.remote_control && p.executable() == Some("claude") {
+            log.step("Allowing Remote Control…");
             allow_remote_control(&isolation).await;
         }
     }

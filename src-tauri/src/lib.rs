@@ -1,4 +1,5 @@
 mod accounts;
+mod activity;
 mod agents;
 mod awake;
 mod commands;
@@ -45,7 +46,7 @@ fn err_chain(e: anyhow::Error) -> String {
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> CmdResult<T> {
-    tauri::async_runtime::spawn_blocking(f)
+    tauri::async_runtime::spawn_blocking(worki_core::trace::carry(f))
         .await
         .map_err(err)?
         .map_err(err_chain)
@@ -113,6 +114,7 @@ pub fn run() {
                 on_change.session_changed(info);
                 handle.emit("session-changed", info).ok();
             }));
+            app.manage(activity::Activities::default());
             app.manage(accounts::Logins::default());
             app.manage(sessions::AccountChecks::default());
             app.manage(AppState {
@@ -142,6 +144,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            activity::activities,
             commands::list_projects,
             commands::add_project,
             commands::add_remote_project,

@@ -318,6 +318,8 @@ pub enum LogLine {
     Info(String),
     Stdout(String),
     Stderr(String),
+    /// A command worki ran, as a shell line.
+    Command(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -3,6 +3,7 @@
 //! server on the host (its own socket, so the user's tmux is untouched) and survive worki
 //! quitting or the connection dropping.
 
+use crate::trace::Traced;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -650,6 +651,7 @@ impl Backend for Ssh {
             .env("COPYFILE_DISABLE", "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .traced()
             .output()?;
         let tar = check_output(tar, "packing files")?;
         self.checked(

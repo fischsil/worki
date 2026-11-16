@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -365,7 +365,7 @@ impl ProjectService {
         instance: Arc<dyn Backend>,
         isolation: &Isolation,
         executable: &str,
-        installing: impl FnOnce(),
+        log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
     ) -> Result<bool> {
         let (check, exe) = (instance.clone(), executable.to_owned());
         if blocking(move || Ok(check.which(&exe).is_some())).await? {
@@ -377,11 +377,17 @@ impl ProjectService {
                 "`{executable}` isn't installed for {label}. Open Isolation and use “Use my installation” under Agents."
             )));
         }
-        installing();
+        log(LogLine::Info(format!(
+            "`{executable}` isn't installed for {label} yet. Installing it…"
+        )));
         let output = Arc::new(std::sync::Mutex::new(Vec::new()));
         let lines = output.clone();
         self.install_in(isolation, instance.as_ref(), executable, move |line| {
-            let (LogLine::Info(text) | LogLine::Stdout(text) | LogLine::Stderr(text)) = line;
+            log(line.clone());
+            let (LogLine::Info(text)
+            | LogLine::Stdout(text)
+            | LogLine::Stderr(text)
+            | LogLine::Command(text)) = line;
             let mut lines = lines.lock().unwrap();
             lines.push(text);
             let excess = lines.len().saturating_sub(10);
@@ -842,6 +848,11 @@ impl ProjectService {
             .unwrap_or(Host::Local))
     }
 
+    /// Where [`Self::create_worktree`] puts a new worktree named `name`.
+    pub fn new_worktree_path(project: &Project, name: &str) -> PathBuf {
+        paths::worktree_path(&project.worktree_root, &paths::branch_name(name))
+    }
+
     pub fn workspace(project: &Project, worktree: Option<&Path>) -> Workspace {
         Workspace {
             repo: project.repo_path.clone(),
@@ -1101,7 +1112,6 @@ impl ProjectService {
         let repo = &project.repo_path;
         let branch = &paths::branch_name(&req.name);
         let base = req.base.trim();
-        git::validate_branch_name(host, repo, branch).await?;
         if git::branch_exists(host, repo, branch).await {
             return Err(Error::BranchExists(branch.into()));
         }
@@ -1109,7 +1119,7 @@ impl ProjectService {
             return Err(Error::UnknownRef(base.into()));
         }
 
-        let path = paths::worktree_path(&project.worktree_root, branch);
+        let path = Self::new_worktree_path(&project, &req.name);
         if host.exists(&path).await? {
             return Err(Error::PathExists(path));
         }
@@ -1122,7 +1132,10 @@ impl ProjectService {
         git::add_worktree(host, repo, &path, branch, base).await?;
         git::set_branch_base(host, repo, branch, base).await?;
 
-        let worktree = find_worktree(host, repo, &path).await?;
+        let worktree = Worktree {
+            base: Some(base.to_owned()),
+            ..find_worktree(host, repo, &path).await?
+        };
         self.forget_sessions_in(&worktree.path)?;
         if req.isolation != ProjectIsolation::Inherit {
             self.set_worktree_choice(&worktree.path, req.isolation)?;
@@ -1206,7 +1219,7 @@ impl ProjectService {
 async fn find_worktree(host: &Host, repo: &Path, path: &Path) -> Result<Worktree> {
     let wanted = host.canonical(path).await;
     let mut found = None;
-    for w in git::list_worktrees(host, repo).await? {
+    for w in git::worktrees(host, repo).await? {
         if w.path == wanted
             || w.path == path
             || (!host.is_remote() && host.canonical(&w.path).await == wanted)
@@ -1245,7 +1258,7 @@ async fn run_setup_script(
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T> {
-    tokio::task::spawn_blocking(f)
+    tokio::task::spawn_blocking(crate::trace::carry(f))
         .await
         .map_err(|e| Error::Isolation(e.to_string()))?
         .map_err(Error::isolation)

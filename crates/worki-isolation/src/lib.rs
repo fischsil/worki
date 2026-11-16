@@ -7,8 +7,10 @@ mod container;
 mod mac_user;
 mod none;
 pub mod ssh;
+pub mod trace;
 pub mod vault;
 
+use crate::trace::Traced;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -558,9 +560,9 @@ pub(crate) fn home_path(out: &Output) -> Option<PathBuf> {
 pub(crate) fn run_with_stdin(cmd: &mut Command, stdin: Option<&[u8]>) -> anyhow::Result<Output> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let Some(input) = stdin else {
-        return Ok(cmd.stdin(Stdio::null()).output()?);
+        return Ok(cmd.stdin(Stdio::null()).traced().output()?);
     };
-    let mut child = cmd.stdin(Stdio::piped()).spawn()?;
+    let mut child = cmd.stdin(Stdio::piped()).traced().spawn()?;
     child.stdin.take().context("stdin")?.write_all(input)?;
     Ok(child.wait_with_output()?)
 }
@@ -591,6 +593,7 @@ pub fn current_user() -> String {
         .or_else(|| {
             Command::new("/usr/bin/id")
                 .arg("-un")
+                .traced()
                 .output()
                 .ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())

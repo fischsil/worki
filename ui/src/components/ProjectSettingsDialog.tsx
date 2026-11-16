@@ -13,6 +13,7 @@ import {
 } from "../lib/api";
 import { keys, useIsolationSettings, useSetupScripts, useSshPasswordSet } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { toast } from "../lib/toast";
 import { AgentsPanel } from "./AgentsPanel";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
@@ -67,14 +68,15 @@ export function ProjectSettingsDialog({ project, onClose }: { project: Project; 
       { title: "Remove project", kind: "warning", okLabel: "Remove" },
     );
     if (!ok) return;
+    if (selectedProjectId === project.id) select("", null);
+    onClose();
     try {
       const warning = await api.removeProject(project.id);
       if (warning) await message(warning, { title: "Project removed", kind: "warning" });
-      if (selectedProjectId === project.id) select("", null);
-      await qc.invalidateQueries({ queryKey: keys.projects });
-      onClose();
     } catch (e) {
-      setError(errorMessage(e));
+      toast(`Couldn't remove ${project.name}: ${errorMessage(e)}`);
+    } finally {
+      qc.invalidateQueries({ queryKey: keys.projects });
     }
   }
 

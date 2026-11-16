@@ -1,3 +1,4 @@
+use crate::trace::Traced;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -56,7 +57,12 @@ impl MacUser {
     }
 
     fn sudo_output(&self, args: &[&str]) -> Option<Output> {
-        self.sudo().args(args).stdin(Stdio::null()).output().ok()
+        self.sudo()
+            .args(args)
+            .stdin(Stdio::null())
+            .traced()
+            .output()
+            .ok()
     }
 
     fn sudo_ok(&self, args: &[&str]) -> bool {
@@ -70,6 +76,7 @@ impl MacUser {
     fn user_exists(&self) -> bool {
         Command::new("/usr/bin/id")
             .args(["-u", &self.user])
+            .traced()
             .output()
             .is_ok_and(|o| o.status.success())
     }
@@ -142,6 +149,7 @@ fn remove_account_in_terminal(
     let opened = Command::new("/usr/bin/open")
         .args(["-a", "Terminal"])
         .arg(&command_file)
+        .traced()
         .status()?;
     if !opened.success() {
         bail!("could not open Terminal; run `sudo sysadminctl -deleteUser {user}` there yourself");
@@ -215,6 +223,7 @@ fn run_admin(args: &[&str], prompt: &str) -> Result<()> {
     );
     let out = Command::new("/usr/bin/osascript")
         .args(["-e", &apple])
+        .traced()
         .output()?;
     std::fs::remove_file(&script).ok();
     if !out.status.success() {
@@ -338,6 +347,7 @@ impl Backend for MacUser {
         for key in ["user.name", "user.email"] {
             let mine = Command::new("/usr/bin/git")
                 .args(["config", "--global", "--get", key])
+                .traced()
                 .output()?;
             let value = String::from_utf8_lossy(&mine.stdout).trim().to_owned();
             if !value.is_empty()
@@ -475,6 +485,7 @@ impl Backend for MacUser {
         let mut pack = pack_home_files(from_home, paths)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .traced()
             .spawn()
             .context("tar")?;
         let tar_out = pack.stdout.take().context("tar stdout")?;
@@ -487,6 +498,7 @@ impl Backend for MacUser {
             ])
             .stdin(tar_out)
             .stderr(Stdio::piped())
+            .traced()
             .output()?;
         // Unreadable or dangling entries make the packing tar exit non-zero but still archive the
         // rest; a partial copy is more useful than none, so only the unpacking side is fatal.
@@ -543,6 +555,7 @@ impl Backend for MacUser {
 
         let group = Command::new("/usr/bin/id")
             .args(["-gn", &self.user])
+            .traced()
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
             .unwrap_or_default();

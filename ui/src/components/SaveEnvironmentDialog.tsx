@@ -1,11 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 
-import { api, isContainer, type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { api, errorMessage, isContainer, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { keys, useSessions, useWorktrees } from "../lib/queries";
-import { useAsyncAction } from "../lib/useAsyncAction";
-import { Button, Checkbox, Dialog, ErrorText, Field, Input, WarnText } from "./ui";
+import { toast } from "../lib/toast";
+import { Button, Checkbox, Dialog, Field, Input, WarnText } from "./ui";
 import { useEffectiveIsolation } from "./WorktreeIsolation";
 
 export function SaveEnvironmentDialog({
@@ -35,25 +34,32 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
   const { data: sessions = [] } = useSessions();
   const [name, setName] = useState(() => defaultName(project));
   const [useForProject, setUseForProject] = useState(true);
-  const [saved, setSaved] = useState<string | null>(null);
-  const { busy, error, run } = useAsyncAction();
 
   const sandbox = isolation?.kind === "dockerSandbox";
   const noun = sandbox ? "sandbox" : "container";
   const tabs = sessions.filter((s) => s.worktreePath === worktree.path && s.state.kind === "running").length;
   const label = worktreeLabel(worktree);
 
-  const save = () =>
-    run(async () => {
-      await api.saveEnvironmentTemplate(project.id, worktree.path, name.trim(), useForProject);
-      setSaved(name.trim());
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.projects }),
-        qc.invalidateQueries({ queryKey: keys.sessions }),
-        qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) }),
-        qc.invalidateQueries({ queryKey: ["environmentTemplates"] }),
-      ]);
-    });
+  async function save() {
+    const tag = name.trim();
+    onClose();
+    try {
+      await api.saveEnvironmentTemplate(project.id, worktree.path, tag, useForProject);
+      toast(
+        useForProject
+          ? `Saved snapshot ${tag}. New worktrees in ${project.name} start from it.`
+          : `Saved snapshot ${tag}. Pick it under Isolation › Start from to use it.`,
+        "info",
+      );
+    } catch (e) {
+      toast(`Couldn't save snapshot ${tag}: ${errorMessage(e)}`);
+    } finally {
+      qc.invalidateQueries({ queryKey: keys.projects });
+      qc.invalidateQueries({ queryKey: keys.sessions });
+      qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) });
+      qc.invalidateQueries({ queryKey: ["environmentTemplates"] });
+    }
+  }
 
   if (isolation && !isContainer(isolation)) {
     return (
@@ -61,22 +67,6 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
         <p className="text-[13px] leading-relaxed">
           Only worktrees running in a Docker Sandbox, Docker or Podman container have an environment that can be saved.
           Change the isolation of this worktree or project to one of those first.
-        </p>
-      </Dialog>
-    );
-  }
-
-  if (saved) {
-    return (
-      <Dialog title="Snapshot saved" onClose={onClose} width={480} footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
-        <p className="flex items-start gap-2 text-[13px] leading-relaxed">
-          <Check size={15} className="mt-0.5 shrink-0 text-added" />
-          <span>
-            Saved as <span className="font-mono">{saved}</span>.{" "}
-            {useForProject
-              ? `New worktrees in ${project.name} start from it.`
-              : `Pick it under Isolation › Start from to use it.`}
-          </span>
         </p>
       </Dialog>
     );
@@ -92,9 +82,8 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={save} disabled={busy || !name.trim() || !isolation}>
-            {busy && <LoaderCircle size={13} className="animate-spin" />}
-            {busy ? "Saving…" : "Save snapshot"}
+          <Button variant="primary" onClick={save} disabled={!name.trim() || !isolation}>
+            Save snapshot
           </Button>
         </>
       }
@@ -117,7 +106,6 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
           Saving stops the sandbox and ends its {tabs} running {tabs === 1 ? "tab" : "tabs"}.
         </WarnText>
       )}
-      <ErrorText>{error}</ErrorText>
     </Dialog>
   );
 }
