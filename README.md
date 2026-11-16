@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/silvanfischer/worki/releases/latest"><img src="https://img.shields.io/github/v/release/silvanfischer/worki?label=download" alt="Latest release"></a>
-  <a href="https://github.com/silvanfischer/worki/actions/workflows/ci.yml"><img src="https://github.com/silvanfischer/worki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/fischsil/worki/releases/latest"><img src="https://img.shields.io/github/v/release/fischsil/worki?label=download" alt="Latest release"></a>
+  <a href="https://github.com/fischsil/worki/actions/workflows/ci.yml"><img src="https://github.com/fischsil/worki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
@@ -186,13 +186,13 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 ## Getting started
 
 1. Download `worki_<version>_universal.dmg` from the
-   [latest release](https://github.com/silvanfischer/worki/releases/latest). It runs on
+   [latest release](https://github.com/fischsil/worki/releases/latest). It runs on
    Apple Silicon and Intel Macs with macOS 13 or later, and is signed and notarized by Apple.
 2. Open the DMG and drag **worki** into **Applications**. Or install it with Homebrew:
 
    ```bash
-   brew tap silvanfischer/tap
-   brew trust silvanfischer/tap
+   brew tap fischsil/tap
+   brew trust fischsil/tap
    brew install --cask worki
    ```
 
@@ -207,7 +207,7 @@ doctor walks you through anything that's missing.
 You need Rust (stable), Node 20+, pnpm and the Xcode command line tools.
 
 ```bash
-git clone https://github.com/silvanfischer/worki.git
+git clone https://github.com/fischsil/worki.git
 cd worki
 ./start_dev.sh
 ```

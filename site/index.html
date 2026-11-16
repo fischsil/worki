@@ -22,7 +22,7 @@
       <a href="#chat">Chat</a>
       <a href="#review">Pull requests</a>
       <a href="#start">Get started</a>
-      <a class="nav-github" href="https://github.com/silvanfischer/worki">GitHub</a>
+      <a class="nav-github" href="https://github.com/fischsil/worki">GitHub</a>
     </nav>
   </header>
 
@@ -42,11 +42,11 @@
         <li>Podman</li>
       </ul>
       <div class="actions">
-        <a class="button primary download" href="https://github.com/silvanfischer/worki/releases/latest">
+        <a class="button primary download" href="https://github.com/fischsil/worki/releases/latest">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
           Download for macOS
         </a>
-        <a class="button" href="https://github.com/silvanfischer/worki">View on GitHub</a>
+        <a class="button" href="https://github.com/fischsil/worki">View on GitHub</a>
       </div>
       <p class="fine"><span class="version"></span>macOS 13 or later · Apple Silicon and Intel · Signed and notarized · MIT licensed</p>
       <figure class="shot hero-shot">
@@ -220,21 +220,21 @@
         <li><b>Drag worki into Applications</b> and open it.</li>
         <li><b>Add a repository</b>, create a worktree, pick its isolation and start an agent. The doctor walks you through anything missing.</li>
       </ol>
-      <a class="button primary download" href="https://github.com/silvanfischer/worki/releases/latest">
+      <a class="button primary download" href="https://github.com/fischsil/worki/releases/latest">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
         Download for macOS
       </a>
       <details>
         <summary>Install with Homebrew</summary>
-        <pre><code>brew tap silvanfischer/tap
-brew trust silvanfischer/tap
+        <pre><code>brew tap fischsil/tap
+brew trust fischsil/tap
 brew install --cask worki</code></pre>
       </details>
       <p class="fine">For container isolation, install Docker Sandbox (sbx), Docker Desktop or Podman. User Isolation needs nothing extra.</p>
       <details>
         <summary>Build from source</summary>
         <p>You need Rust, Node 20 or later, pnpm and the Xcode command line tools.</p>
-        <pre><code>git clone https://github.com/silvanfischer/worki.git
+        <pre><code>git clone https://github.com/fischsil/worki.git
 cd worki
 ./start_dev.sh</code></pre>
       </details>
@@ -244,14 +244,14 @@ cd worki
   <footer>
     <span>worki is free and open source under the MIT license.</span>
     <nav>
-      <a href="https://github.com/silvanfischer/worki">GitHub</a>
-      <a href="https://github.com/silvanfischer/worki/releases">Releases</a>
-      <a href="https://github.com/silvanfischer/worki/issues">Issues</a>
+      <a href="https://github.com/fischsil/worki">GitHub</a>
+      <a href="https://github.com/fischsil/worki/releases">Releases</a>
+      <a href="https://github.com/fischsil/worki/issues">Issues</a>
     </nav>
   </footer>
 
   <script>
-    fetch("https://api.github.com/repos/silvanfischer/worki/releases/latest")
+    fetch("https://api.github.com/repos/fischsil/worki/releases/latest")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((release) => {
         const dmg = release.assets.find((a) => a.name.endsWith(".dmg"));
