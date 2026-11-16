@@ -12,7 +12,17 @@ export type DialogState =
   | { kind: "settings"; tab: SettingsTab }
   | null;
 
-export type SettingsTab = "general" | "appearance" | "agents" | "git" | "secrets" | "isolation" | "snapshots" | "sshHosts" | "openIn";
+export type SettingsTab =
+  | "general"
+  | "appearance"
+  | "agents"
+  | "accounts"
+  | "git"
+  | "secrets"
+  | "isolation"
+  | "snapshots"
+  | "sshHosts"
+  | "openIn";
 
 export interface PrDraft {
   title: string;
@@ -67,14 +77,8 @@ interface UiState {
   agentView: SessionKind;
   /** Look for new worki releases on start and every few hours. */
   autoUpdate: boolean;
-  /** Commit box, commit list and rebasing in the changes panel. */
-  showCommits: boolean;
   /** The branch's commit list is open, not folded to its heading. */
   commitListOpen: boolean;
-  /** Pull request section and status, which ask GitHub through `gh`. */
-  showPullRequests: boolean;
-  /** Agent names and colours and friendlier empty views; off is the calm look. */
-  playful: boolean;
   dialog: DialogState;
   select: (projectId: string, worktreePath: string | null) => void;
   toggleCollapsed: (projectId: string) => void;
@@ -85,7 +89,6 @@ interface UiState {
   setWriterCommand: (command: string) => void;
   toggleChanges: () => void;
   toggleTerminal: () => void;
-  setPlayful: (playful: boolean) => void;
   setChangesScope: (scope: ChangesScope) => void;
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
@@ -97,9 +100,7 @@ interface UiState {
   setReopenSessions: (on: boolean) => void;
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
-  setShowCommits: (on: boolean) => void;
   setCommitListOpen: (open: boolean) => void;
-  setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
   closeDialog: () => void;
 }
@@ -133,10 +134,7 @@ export const useUi = create<UiState>()(
       reopenSessions: true,
       agentView: "terminal",
       autoUpdate: true,
-      showCommits: true,
       commitListOpen: false,
-      showPullRequests: true,
-      playful: false,
       dialog: null,
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
       toggleCollapsed: (id) => set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
@@ -155,7 +153,6 @@ export const useUi = create<UiState>()(
       setWriterCommand: (writerCommand) => set({ writerCommand }),
       toggleChanges: () => set((s) => ({ showChanges: !s.showChanges })),
       toggleTerminal: () => set((s) => ({ showTerminal: !s.showTerminal })),
-      setPlayful: (playful) => set({ playful }),
       setChangesScope: (changesScope) => set({ changesScope }),
       setPanelWidth: (panel, width) => {
         const { min, max } = PANEL_LIMITS[panel];
@@ -170,9 +167,7 @@ export const useUi = create<UiState>()(
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
-      setShowCommits: (showCommits) => set({ showCommits }),
       setCommitListOpen: (commitListOpen) => set({ commitListOpen }),
-      setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
       closeDialog: () => set({ dialog: null }),
     }),
@@ -195,10 +190,7 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
-        showCommits,
         commitListOpen,
-        showPullRequests,
-        playful,
         prDrafts,
         askPrompts,
         writerCommand,
@@ -219,10 +211,7 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
-        showCommits,
         commitListOpen,
-        showPullRequests,
-        playful,
         prDrafts,
         askPrompts,
         writerCommand,

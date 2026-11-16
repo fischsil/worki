@@ -5,7 +5,6 @@ import { Coins, GitBranch, GitCompareArrows, MoreHorizontal, Send, SquareTermina
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
 import { type ReviewComment, reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
-import { usePlayful } from "../lib/playful";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
 import { BranchCommits, BranchStatus, CommitBox, PrSection, Section } from "./BranchPanel";
@@ -40,9 +39,6 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const scope = useUi((s) => s.changesScope);
   const setScope = useUi((s) => s.setChangesScope);
   const base = useCompareBase(worktree.path, worktree.base ?? project.defaultBase);
-  const showCommits = useUi((s) => s.showCommits);
-  const showPullRequests = useUi((s) => s.showPullRequests);
-  const playful = usePlayful();
   const hasBranchTab = !!base;
   const onBase = !!worktree.branch && base?.replace(/^origin\//, "") === worktree.branch;
   const tab = scope === "branch" && hasBranchTab ? "branch" : "uncommitted";
@@ -153,14 +149,14 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                   <FileList
                     files={status?.changedFiles}
                     error={error}
-                    empty={playful ? "✨ Clean as a whistle. No uncommitted changes." : "No uncommitted changes."}
-                    excluded={showCommits ? excluded : undefined}
+                    empty="No uncommitted changes."
+                    excluded={excluded}
                     onExclude={setExcluded}
                     comments={comments}
                     diffFile={diffFile}
                     onOpen={openFile}
                   />
-                  {showCommits && !!status?.changedFiles.length && (
+                  {!!status?.changedFiles.length && (
                     <CommitBox
                       worktreePath={worktree.path}
                       files={status.changedFiles.map((f) => f.path).filter((p) => !excluded.has(p))}
@@ -172,7 +168,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
 
               {tab === "branch" && base && (
                 <>
-                  {showCommits && worktree.branch && branch.data && (
+                  {worktree.branch && branch.data && (
                     <BranchStatus
                       worktreePath={worktree.path}
                       branch={worktree.branch}
@@ -181,7 +177,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                       behind={branch.data.behind}
                     />
                   )}
-                  {showCommits && <BranchCommits worktreePath={worktree.path} base={base} />}
+                  <BranchCommits worktreePath={worktree.path} base={base} />
                   <Section
                     scroll
                     className="min-h-24 flex-1"
@@ -198,7 +194,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                       onOpen={openFile}
                     />
                   </Section>
-                  {showPullRequests && worktree.branch && !onBase && <PrSection worktree={worktree} base={base} />}
+                  {worktree.branch && !onBase && <PrSection worktree={worktree} base={base} />}
                 </>
               )}
             </div>

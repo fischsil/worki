@@ -195,6 +195,40 @@ pub async fn set_worktree_isolation(
     .await
 }
 
+/// Starts the worktree's stopped environment ahead of its first session, so starting the
+/// session doesn't wait for it.
+#[tauri::command]
+pub async fn warm_worktree(
+    state: State<'_, AppState>,
+    project_id: String,
+    worktree_path: std::path::PathBuf,
+) -> CmdResult<()> {
+    let project = state.projects.project(&project_id).map_err(err)?;
+    let isolation = state
+        .projects
+        .isolation_for_worktree(&project, &worktree_path)
+        .map_err(err)?;
+    if !isolation.is_container() {
+        return Ok(());
+    }
+    let ws = ProjectService::workspace(&project, Some(&worktree_path));
+    let check = isolation.clone();
+    if !blocking(move || Ok(check.backend().instance_stopped(&ws))).await? {
+        return Ok(());
+    }
+    let scope = Scope::worktree(&worktree_path).in_project(&project_id);
+    let title = format!("Start {}", isolation.label());
+    track(state.app.clone(), title, scope, |log| async move {
+        log.step("Starting the worktree's environment…");
+        state
+            .projects
+            .agent_instance(&project, &worktree_path, &isolation)
+            .await
+            .map(drop)
+    })
+    .await
+}
+
 static BUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Builds the isolation's image, streaming the build output. One build at a time.

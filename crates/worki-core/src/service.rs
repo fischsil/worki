@@ -12,7 +12,7 @@ use worki_isolation::{Backend, LaunchRequest, Workspace};
 use crate::openers::{self, OpenerSettings};
 use crate::setup::{run_captured, run_logged};
 use crate::store::Store;
-use crate::{git, github, paths, secrets, Error, Host, Result};
+use crate::{agents, git, github, paths, secrets, Error, Host, Result};
 
 const AGENT_SETTINGS_KEY: &str = "agents";
 const ISOLATION_SETTINGS_KEY: &str = "isolation";
@@ -23,8 +23,23 @@ const SAVED_SESSIONS_KEY: &str = "agentSessions";
 const WORKTREE_ISOLATION_KEY: &str = "worktreeIsolation";
 const SNAPSHOTS_KEY: &str = "snapshots";
 const KEEP_AWAKE_KEY: &str = "keepAwake";
+/// [`ProjectEnvironment`]s by project id, where they aren't the default.
+const PROJECT_ENVIRONMENTS_KEY: &str = "projectEnvironments";
 
 type WorktreeChoices = BTreeMap<String, ProjectIsolation>;
+
+/// Where Claude Code keeps its files for a project's sessions, and how they sign in.
+#[derive(Debug, Clone)]
+pub struct ClaudeHome {
+    /// The account sessions sign in with; `None` when they sign in themselves.
+    pub account: Option<String>,
+    pub sign_in: AccountSignIn,
+    /// Claude Code's config folder (`CLAUDE_CONFIG_DIR`): the project's or the worktree's.
+    pub dir: PathBuf,
+    /// The account's login folder (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), when sessions sign in with
+    /// the account's login.
+    pub login_dir: Option<PathBuf>,
+}
 
 pub struct ProjectService {
     store: Store,
@@ -180,9 +195,20 @@ impl ProjectService {
         let mut choices = self.worktree_choices()?;
         choices.retain(|path, _| !project.contains(Path::new(path)));
         self.save_worktree_choices(&choices)?;
+        let scope = secrets::project_scope(id);
+        for name in self.agent_settings()?.secret_names(&scope) {
+            secrets::delete(&scope, name)?;
+        }
         self.update_agent_settings(|s| {
             s.project_accounts.remove(id);
+            s.project_sign_in.remove(id);
+            s.secrets.remove(&scope);
         })?;
+        self.set_project_environment(id, ProjectEnvironment::default())?;
+        let own = paths::project_dir(id);
+        if own.exists() {
+            std::fs::remove_dir_all(&own)?;
+        }
         self.store.delete_project(id)?;
         Ok((!warnings.is_empty()).then(|| warnings.join("\n")))
     }
@@ -278,6 +304,9 @@ impl ProjectService {
         if dir.exists() {
             std::fs::remove_dir_all(&dir)?;
         }
+        if let Some(secret) = agents::claude_sign_in_secret() {
+            secrets::set_account_token(id, secret, None)?;
+        }
         let mut warnings = Vec::new();
         for project in &users {
             let mut isolations = self.project_isolations(project)?;
@@ -294,16 +323,12 @@ impl ProjectService {
 
     /// The account the project's agents use: its own choice, else the default account.
     pub fn project_account(&self, project_id: &str) -> Result<Option<String>> {
-        let mut settings = self.agent_settings()?;
-        Ok(settings
-            .project_accounts
-            .remove(project_id)
-            .or(settings.default_account))
+        Ok(self.agent_settings()?.account_of(project_id).cloned())
     }
 
-    /// Picks the account the project's agents use (`None`: the default account). The account
-    /// folder is mounted when an environment is created, so each worktree's environment is
-    /// replaced at a session start when nothing runs in it (see [`Self::grant_access_with`]).
+    /// Picks the account the project's agents use (`None`: the default account). Its login folder
+    /// is mounted when an environment is created, so each worktree's environment is replaced at
+    /// a session start when nothing runs in it (see [`Self::grant_access_with`]).
     pub fn set_project_account(&self, project_id: &str, account: Option<String>) -> Result<()> {
         self.update_agent_settings(|s| match account {
             Some(id) => {
@@ -315,18 +340,159 @@ impl ProjectService {
         })
     }
 
-    /// The folder of the account sessions in `isolation` use for `project`, if it has one there.
-    pub fn account_dir(
+    pub fn set_project_sign_in(&self, project_id: &str, sign_in: AccountSignIn) -> Result<()> {
+        self.update_agent_settings(|s| match sign_in {
+            AccountSignIn::Folder => {
+                s.project_sign_in.remove(project_id);
+            }
+            other => {
+                s.project_sign_in.insert(project_id.to_owned(), other);
+            }
+        })
+    }
+
+    pub fn project_environment(&self, project_id: &str) -> Result<ProjectEnvironment> {
+        let mut all: BTreeMap<String, ProjectEnvironment> =
+            self.setting(PROJECT_ENVIRONMENTS_KEY)?;
+        Ok(all.remove(project_id).unwrap_or_default())
+    }
+
+    /// Takes effect in each worktree's environment at its next session start while nothing runs
+    /// in it (see [`Self::grant_access_with`]).
+    pub fn set_project_environment(&self, project_id: &str, env: ProjectEnvironment) -> Result<()> {
+        let mut all: BTreeMap<String, ProjectEnvironment> =
+            self.setting(PROJECT_ENVIRONMENTS_KEY)?;
+        if env == ProjectEnvironment::default() {
+            all.remove(project_id);
+        } else {
+            all.insert(project_id.to_owned(), env);
+        }
+        self.store.set_setting(PROJECT_ENVIRONMENTS_KEY, &all)
+    }
+
+    /// Where Claude Code keeps its files for `project`'s sessions in `worktree` with `isolation`,
+    /// and how they sign in; `None` outside containers, where they use the environment's own. The
+    /// config folder is the project's own, or the worktree's, never one other projects use; with
+    /// the account's login only the login is shared. Without an account, sessions sign in
+    /// themselves, and each worktree keeps its folder and that login to itself. Each folder
+    /// starts from the account's (or a worktree's from the project's) on first use.
+    pub fn claude_home(
         &self,
         project: &Project,
+        worktree: Option<&Path>,
         isolation: &Isolation,
-    ) -> Result<Option<std::path::PathBuf>> {
+    ) -> Result<Option<ClaudeHome>> {
         if !isolation.is_container() {
             return Ok(None);
         }
-        Ok(self
-            .project_account(&project.id)?
-            .map(|id| crate::paths::account_dir(&id)))
+        let settings = self.agent_settings()?;
+        let sign_in = settings.sign_in_of(&project.id);
+        let account = settings
+            .account_of(&project.id)
+            .filter(|_| sign_in != AccountSignIn::Session)
+            .cloned();
+        let account_dir = account.as_deref().map(paths::account_dir);
+        let mut dir = paths::project_claude_dir(&project.id);
+        let project_paths = [project.repo_path.as_path(), project.worktree_root.as_path()];
+        agents::start_claude_dir(&dir, account_dir.as_deref(), &project_paths)
+            .map_err(Error::isolation)?;
+        let scope = match sign_in {
+            AccountSignIn::Session => FilesScope::Worktree,
+            _ => self.project_environment(&project.id)?.claude_files,
+        };
+        if let (FilesScope::Worktree, Some(worktree)) = (scope, worktree) {
+            let own = paths::worktree_dir(&project.id, worktree).join("claude");
+            agents::start_claude_dir(&own, Some(&dir), &[worktree, &project.repo_path])
+                .map_err(Error::isolation)?;
+            dir = own;
+        }
+        let login_dir = match (sign_in, &account) {
+            (AccountSignIn::Folder, Some(account)) => {
+                Some(self.ready_login(&settings, account, &dir)?)
+            }
+            _ => None,
+        };
+        Ok(Some(ClaudeHome {
+            account,
+            sign_in,
+            dir,
+            login_dir,
+        }))
+    }
+
+    /// The Claude Code config folders sessions signing in with `account`'s login use: those of
+    /// the projects on it, and of their worktrees that have their own.
+    fn login_configs(&self, settings: &AgentSettings, account: &str) -> Result<Vec<PathBuf>> {
+        let mut configs = Vec::new();
+        for project in self.list_projects()? {
+            let on_login = settings.account_of(&project.id).map(String::as_str) == Some(account)
+                && settings.sign_in_of(&project.id) == AccountSignIn::Folder;
+            if !on_login {
+                continue;
+            }
+            configs.push(paths::project_claude_dir(&project.id));
+            let worktrees = paths::project_dir(&project.id).join("worktrees");
+            for entry in std::fs::read_dir(worktrees).into_iter().flatten().flatten() {
+                configs.push(entry.path().join("claude"));
+            }
+        }
+        Ok(configs)
+    }
+
+    /// After signing `account` in through worki with `config` as Claude Code's folder: keeps who
+    /// it signed in as next to the login, and gives that to the config folders sessions on the
+    /// login use, so they don't hold on to who it was before.
+    pub fn keep_signed_in_identity(&self, account: &str, config: &Path) -> Result<()> {
+        let login =
+            agents::account_login_dir(&paths::account_dir(account)).map_err(Error::isolation)?;
+        agents::keep_login_identity(&login, config).map_err(Error::isolation)?;
+        let configs = self.login_configs(&self.agent_settings()?, account)?;
+        agents::give_login_identity(&login, &configs).map_err(Error::isolation)
+    }
+
+    /// The account's login folder for a session using the config folder `dir`: who the login is
+    /// brought in step first, in case a session signed in again itself, then given to `dir`.
+    fn ready_login(&self, settings: &AgentSettings, account: &str, dir: &Path) -> Result<PathBuf> {
+        let login =
+            agents::account_login_dir(&paths::account_dir(account)).map_err(Error::isolation)?;
+        let configs = self.login_configs(settings, account)?;
+        if let Some(identity) =
+            agents::sync_login_identity(&login, &configs).map_err(Error::isolation)?
+        {
+            self.follow_identity(account, &identity)?;
+        }
+        agents::copy_login_identity(&login, dir).map_err(Error::isolation)?;
+        Ok(login)
+    }
+
+    /// Updates the account to who its login is after a session signed in again itself.
+    fn follow_identity(&self, account: &str, identity: &agents::Identity) -> Result<()> {
+        let mut saved = self.account(account)?;
+        let profile = &identity["oauthAccount"];
+        saved.email = profile["emailAddress"].as_str().map(str::to_owned);
+        saved.organization = profile["organizationName"].as_str().map(str::to_owned);
+        self.save_account(&saved)
+    }
+
+    /// Moves what projects need out of the account folders, which older versions used as every
+    /// project's config folder, and empties them down to the login. Once per account; call it
+    /// before any session starts.
+    pub fn tidy_account_folders(&self) -> Result<()> {
+        let settings = self.agent_settings()?;
+        let projects = self.list_projects()?;
+        for account in &settings.accounts {
+            let users: Vec<(PathBuf, Vec<&Path>)> = projects
+                .iter()
+                .filter(|p| settings.account_of(&p.id) == Some(&account.id))
+                .map(|p| {
+                    let paths = vec![p.repo_path.as_path(), p.worktree_root.as_path()];
+                    (paths::project_claude_dir(&p.id), paths)
+                })
+                .collect();
+            agents::tidy_account_dir(&paths::account_dir(&account.id), &users)
+                .map_err(Error::isolation)?;
+        }
+        Ok(())
     }
 
     pub fn reorder_projects(&self, ids: &[String]) -> Result<()> {
@@ -334,16 +500,41 @@ impl ProjectService {
     }
 
     pub fn agent_settings(&self) -> Result<AgentSettings> {
+        let settings: AgentSettings = self.setting(AGENT_SETTINGS_KEY)?;
+        Ok(settings.with_built_in_agents().with_known_installers())
+    }
+
+    /// Moves secrets stored the ways older versions did: one unscoped list, then per isolation.
+    /// Call it once at startup.
+    pub fn migrate_secrets(&self) -> Result<()> {
         let mut settings: AgentSettings = self.setting(AGENT_SETTINGS_KEY)?;
+        let default_scope = self.isolation_settings()?.default.scope_key();
+        let mut changed = false;
         if let Some(names) = settings.secrets.remove(LEGACY_SCOPE) {
-            let scope = self.isolation_settings()?.default.scope_key();
             for name in &names {
-                secrets::adopt_legacy(&scope, name)?;
-                settings.add_secret(&scope, name);
+                secrets::adopt_legacy(&default_scope, name)?;
+                settings.add_secret(&default_scope, name);
             }
+            changed = true;
+        }
+        changed |= Self::move_secrets_to_global(&mut settings, &default_scope)?;
+        if changed {
             self.save_agent_settings(&settings)?;
         }
-        Ok(settings.with_built_in_agents().with_known_installers())
+        Ok(())
+    }
+
+    /// Secrets used to be kept per isolation. Those you manage move to the global ones; sign-in
+    /// tokens stay with their isolation.
+    fn move_secrets_to_global(settings: &mut AgentSettings, default_scope: &str) -> Result<bool> {
+        let moves = settings.secrets_to_globalize(default_scope);
+        for (scope, name) in &moves {
+            secrets::adopt(scope, secrets::GLOBAL, name)?;
+            settings.remove_secret(scope, name);
+            settings.add_secret(secrets::GLOBAL, name);
+        }
+        settings.secrets.retain(|_, names| !names.is_empty());
+        Ok(!moves.is_empty())
     }
 
     /// The environment `worktree`'s agents run in (call after `grant_access`).
@@ -436,7 +627,7 @@ impl ProjectService {
             command: Some(script),
             interactive: false,
             stdin: false,
-            env: self.secret_env(isolation)?,
+            env: self.secret_env(None, isolation)?,
             session: None,
         };
         let launch = instance.launch(&req).map_err(Error::isolation)?;
@@ -858,7 +1049,9 @@ impl ProjectService {
             repo: project.repo_path.clone(),
             worktree_root: project.worktree_root.clone(),
             worktree: worktree.map(Path::to_path_buf),
-            account_dir: None,
+            claude_dir: None,
+            claude_login_dir: None,
+            shared_folder: None,
             replace_outdated: false,
         }
     }
@@ -870,34 +1063,42 @@ impl ProjectService {
         project: &Project,
         worktree: Option<&Path>,
     ) -> Result<Isolation> {
-        self.grant_access_with(project, worktree, false).await
+        Ok(self.grant_access_with(project, worktree, false).await?.0)
     }
 
-    /// [`Self::grant_access`], also replacing the worktree's environment when it was made for
-    /// another account than the project's: only when nothing runs in it.
+    /// [`Self::grant_access`], also replacing the worktree's environment when it was made with
+    /// other Claude Code folders or project folder than it gets now: only when nothing runs in
+    /// it. Returns the Claude Code folders sessions there use.
     pub async fn grant_access_with(
         &self,
         project: &Project,
         worktree: Option<&Path>,
         replace_outdated: bool,
-    ) -> Result<Isolation> {
+    ) -> Result<(Isolation, Option<ClaudeHome>)> {
         let isolation = match worktree {
             Some(w) => self.isolation_for_worktree(project, w)?,
             None => self.isolation_for(project)?,
         };
+        let mut home = None;
         if isolation != Isolation::None {
             let backend = isolation.backend();
-            let account_dir = self.account_dir(project, &isolation)?;
+            home = self.claude_home(project, worktree, &isolation)?;
+            let shared_folder = (isolation.is_container()
+                && self.project_environment(&project.id)?.shared_folder)
+                .then(|| paths::project_shared_dir(&project.id));
+            if let Some(dir) = &shared_folder {
+                std::fs::create_dir_all(dir)?;
+            }
             let ws = Workspace {
-                // Without an account there are none to switch between: removing the last
-                // one already removed the environments that used it.
-                replace_outdated: replace_outdated && account_dir.is_some(),
-                account_dir,
+                replace_outdated,
+                claude_login_dir: home.as_ref().and_then(|h| h.login_dir.clone()),
+                claude_dir: home.as_ref().map(|h| h.dir.clone()),
+                shared_folder,
                 ..Self::workspace(project, worktree)
             };
             blocking(move || backend.grant_access(&ws)).await?;
         }
-        Ok(isolation)
+        Ok((isolation, home))
     }
 
     /// Every distinct isolation in use: the global default, project defaults and worktree choices.
@@ -921,13 +1122,24 @@ impl ProjectService {
         Ok(all)
     }
 
-    /// Secret values configured for `isolation` that have one stored.
-    pub fn secret_env(&self, isolation: &Isolation) -> Result<Vec<(String, String)>> {
-        let scope = isolation.scope_key();
-        Ok(secrets::env(
-            &scope,
-            self.agent_settings()?.secret_names(&scope),
-        ))
+    /// The secrets agents of `project` in `isolation` get: the isolation's sign-in, then the
+    /// global secrets, then the project's, each over the ones before with the same name.
+    pub fn secret_env(
+        &self,
+        project_id: Option<&str>,
+        isolation: &Isolation,
+    ) -> Result<Vec<(String, String)>> {
+        let settings = self.agent_settings()?;
+        let mut scopes = vec![isolation.scope_key(), secrets::GLOBAL.to_owned()];
+        scopes.extend(project_id.map(secrets::project_scope));
+        let mut env: Vec<(String, String)> = Vec::new();
+        for scope in &scopes {
+            for (name, value) in secrets::env(scope, settings.secret_names(scope)) {
+                env.retain(|(n, _)| *n != name);
+                env.push((name, value));
+            }
+        }
+        Ok(env)
     }
 
     pub async fn setup_scripts(&self, id: &str) -> Result<SetupScripts> {
@@ -1083,7 +1295,7 @@ impl ProjectService {
             .to_owned();
         let command = crate::launch::writer_command(template, writer.fork.as_deref());
         let isolation = self.grant_access(&project, Some(worktree)).await?;
-        let mut env = self.secret_env(&isolation)?;
+        let mut env = self.secret_env(Some(&project.id), &isolation)?;
         env.push(("WORKI_PROMPT".into(), prompt));
         let req = LaunchRequest {
             cwd: worktree.to_path_buf(),
@@ -1160,7 +1372,7 @@ impl ProjectService {
                     ("WORKI_WORKTREE_PATH".to_string(), path_key(&worktree.path)),
                     ("WORKI_BRANCH".to_string(), branch.to_string()),
                 ];
-                env.extend(self.secret_env(&isolation)?);
+                env.extend(self.secret_env(Some(id), &isolation)?);
                 if let Err(e) =
                     run_setup_script(&isolation, &worktree.path, script, env, log.clone()).await
                 {
@@ -1209,6 +1421,10 @@ impl ProjectService {
         self.forget_sessions_in(&wt.path)?;
         self.forget_sessions_in(&req.path)?;
         self.set_worktree_choice(&wt.path, ProjectIsolation::Inherit)?;
+        let own = paths::worktree_dir(id, &wt.path);
+        if own.exists() {
+            std::fs::remove_dir_all(&own)?;
+        }
         if let (true, Some(branch)) = (req.delete_branch, wt.branch.as_deref()) {
             git::delete_branch(host, repo, branch, req.force).await?;
         }

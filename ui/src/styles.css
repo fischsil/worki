@@ -218,13 +218,6 @@ button {
   }
 }
 
-@keyframes playful-fade {
-  0%, 75% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-.playful-fade { animation: playful-fade 4s ease-in forwards; }
-
 @keyframes shimmer {
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }

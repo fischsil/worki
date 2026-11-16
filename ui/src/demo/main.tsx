@@ -1,5 +1,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
+import type { ProjectEnvironment } from "../lib/api";
+
 const scene = new URLSearchParams(location.search).get("scene") ?? "main";
 const ROOT = "/Users/dev/worki/worktrees";
 const now = Math.floor(Date.now() / 1000);
@@ -21,7 +23,7 @@ let agentSettings = {
     { id: "codex", name: "Codex", command: "codex", install: null },
   ],
   defaultProfile: "claude",
-  secrets: {},
+  secrets: { global: ["GH_TOKEN"], "project:acme-web": ["STRIPE_TEST_KEY"] } as Record<string, string[]>,
   remoteControl: false,
   claudeSettings: DEFAULT_CLAUDE_SETTINGS,
   accounts: [
@@ -30,14 +32,16 @@ let agentSettings = {
   ] as { id: string; email: string | null; plan: string | null; organization: string | null }[],
   projectAccounts: { "acme-web": "side" } as Record<string, string>,
   defaultAccount: "work" as string | null,
+  projectSignIn: {} as Record<string, "folder" | "token">,
 };
+const accountTokens = new Set<string>();
+const projectEnvironments: Record<string, ProjectEnvironment> = {};
 let finishLogin: (() => void) | null = null;
 
 const projects = [
   project("acme-web", "/Users/dev/src/acme-web"),
   project("payments-api", "/Users/dev/src/payments-api"),
   project("infra", "/Users/dev/src/infra"),
-  ...(scene === "playful" ? [project("docs", "/Users/dev/src/docs")] : []),
 ];
 
 function project(name: string, repoPath: string) {
@@ -103,9 +107,6 @@ const commits = [
 
 const shellPrompt = "\x1b[32mdev@mac\x1b[0m \x1b[34m~/worki/worktrees/acme-web/checkout-redesign\x1b[0m $ pnpm test\r\n\r\n \x1b[32m✓\x1b[0m 128 tests passed (2.4s)\r\n\r\n\x1b[32mdev@mac\x1b[0m \x1b[34m~/worki/worktrees/acme-web/checkout-redesign\x1b[0m $ ";
 
-const started = Date.now();
-/** In the playful scene, whether its timeline has reached `ms`; other scenes are always past it. */
-const playfulAt = (ms: number) => scene !== "playful" || Date.now() - started >= ms;
 
 const isolation = { kind: "dockerSandbox", template: "worki-acme-web:20261109-1430" };
 
@@ -424,6 +425,11 @@ function handle(cmd: string, args: Record<string, any>): unknown {
   switch (cmd) {
     case "list_projects":
       return projects;
+    case "update_project": {
+      const project = projects.find((p) => p.id === args.id);
+      if (project) Object.assign(project, args.patch);
+      return project;
+    }
     case "list_worktrees":
       return worktrees[args.projectId] ?? [];
     case "worktree_status":
@@ -452,6 +458,17 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     case "remove_claude_account":
       agentSettings = { ...agentSettings, accounts: agentSettings.accounts.filter((a) => a.id !== args.id) };
       return null;
+    case "obtain_account_token":
+      setTimeout(
+        () => args.onEvent.onmessage?.({ kind: "url", url: "https://claude.ai/oauth/authorize?code=true" }),
+        800,
+      );
+      return new Promise<null>((resolve) => {
+        finishLogin = () => {
+          accountTokens.add(args.id);
+          resolve(null);
+        };
+      });
     case "log_in_claude_account":
       setTimeout(
         () => args.onEvent.onmessage?.({ kind: "url", url: "https://claude.ai/oauth/authorize?code=true" }),
@@ -481,6 +498,27 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       agentSettings = { ...agentSettings, projectAccounts };
       return null;
     }
+    case "set_project_sign_in": {
+      const projectSignIn: Record<string, "folder" | "token"> = { ...agentSettings.projectSignIn, [args.projectId]: args.signIn };
+      if (args.signIn === "folder") delete projectSignIn[args.projectId];
+      agentSettings = { ...agentSettings, projectSignIn };
+      return null;
+    }
+    case "project_claude_dir":
+      return `/Users/dev/Library/Application Support/worki/projects/${args.projectId}/claude`;
+    case "project_environment":
+      return projectEnvironments[args.projectId] ?? { sharedFolder: false, claudeFiles: "project" };
+    case "set_project_environment":
+      projectEnvironments[args.projectId] = args.environment;
+      return null;
+    case "project_shared_dir":
+      return `/Users/dev/Library/Application Support/worki/projects/${args.projectId}/shared`;
+    case "account_token_set":
+      return accountTokens.has(args.accountId);
+    case "set_account_token":
+      if (args.token) accountTokens.add(args.accountId);
+      else accountTokens.delete(args.accountId);
+      return null;
     case "activities":
       return activities;
     case "keep_awake":
@@ -576,9 +614,9 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       if (args.worktreePath === checkout)
         return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 };
       if (args.worktreePath === worktrees["acme-web"][2].path)
-        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: playfulAt(7_000) ? "MERGED" : "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
+        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
       if (args.worktreePath === worktrees["acme-web"][3].path)
-        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, checksPassed: playfulAt(11_000) ? 3 : 2, checksFailed: playfulAt(11_000) ? 0 : 1, checksPending: 0 };
+        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
       return null;
     case "file_diff":
       return diff;
@@ -597,6 +635,21 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       ];
     case "secret_status":
       return (args.names as string[]).map((n) => [n, true]);
+    case "set_secret": {
+      const names = agentSettings.secrets[args.scope] ?? [];
+      if (!names.includes(args.name))
+        agentSettings = { ...agentSettings, secrets: { ...agentSettings.secrets, [args.scope]: [...names, args.name] } };
+      return null;
+    }
+    case "delete_secret":
+      agentSettings = {
+        ...agentSettings,
+        secrets: {
+          ...agentSettings.secrets,
+          [args.scope]: (agentSettings.secrets[args.scope] ?? []).filter((n) => n !== args.name),
+        },
+      };
+      return null;
     case "ssh_hosts":
       return [];
     case "setup_scripts":
@@ -757,9 +810,6 @@ const ui = {
   terminalFontSize: 13,
   reopenSessions: true,
   activeSession: { [checkout]: scene === "chat" || scene === "hero" ? "s5" : "s1" },
-  showCommits: true,
-  showPullRequests: true,
-  playful: scene === "playful",
 };
 localStorage.setItem("worki-ui", JSON.stringify({ state: ui, version: 0 }));
 localStorage.removeItem("worki-review");
@@ -767,32 +817,9 @@ localStorage.removeItem("worki-review");
 await import("../main");
 
 const { useUi } = await import("../lib/store");
-if (scene === "playful") {
-  const { emit } = await import("@tauri-apps/api/event");
-  const update = (id: string, change: object) => {
-    const s = sessions.find((s) => s.id === id)!;
-    Object.assign(s, change);
-    emit("session-changed", s);
-  };
-  const refetch = () => window.dispatchEvent(new Event("visibilitychange"));
-  setTimeout(() => update("s1", { activity: "idle" }), 4_000);
-  setTimeout(refetch, 7_200);
-  setTimeout(() => {
-    for (const id of ["s2", "s4", "s5"]) update(id, { activity: "idle", attention: null });
-    refetch();
-  }, 11_200);
-}
 if (scene === "settings") useUi.getState().openDialog({ kind: "settings", tab: "isolation" });
 if (scene === "git") useUi.getState().openDialog({ kind: "settings", tab: "git" });
-if (scene === "accounts") {
-  useUi.getState().openDialog({ kind: "settings", tab: "agents" });
-  const show = () => {
-    const heading = [...document.querySelectorAll("h3")].find((h) => h.textContent === "Claude Code accounts");
-    if (heading) heading.scrollIntoView({ block: "center" });
-    else setTimeout(show, 100);
-  };
-  show();
-}
+if (scene === "accounts") useUi.getState().openDialog({ kind: "settings", tab: "accounts" });
 if (scene === "activity") {
   const open = () => {
     const button = [...document.querySelectorAll("button")].find((b) => b.title.startsWith("Start Claude Code"));

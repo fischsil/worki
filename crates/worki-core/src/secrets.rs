@@ -36,13 +36,37 @@ pub fn delete(scope: &str, name: &str) -> Result<()> {
     vault::delete(&key(scope, name)).map_err(Error::isolation)
 }
 
+/// Secrets every agent gets.
+pub const GLOBAL: &str = "global";
+
+/// Secrets the project's agents get, over the global ones.
+pub fn project_scope(project_id: &str) -> String {
+    format!("project:{project_id}")
+}
+
+/// Whether `scope` holds secrets you manage rather than an isolation's sign-in.
+pub fn is_managed_scope(scope: &str) -> bool {
+    scope == GLOBAL || scope.starts_with("project:")
+}
+
+/// Moves `name`'s value from `from` to `to`, unless `to` already has one.
+pub fn adopt(from: &str, to: &str, name: &str) -> Result<()> {
+    move_value(&key(from, name), to, name)
+}
+
 /// Moves an unscoped value into `scope`, if there is one.
 pub fn adopt_legacy(scope: &str, name: &str) -> Result<()> {
-    if vault::has(&legacy_key(name)) {
-        if let Some(value) = vault::get(&legacy_key(name)) {
-            set(scope, name, &value)?;
+    move_value(&legacy_key(name), scope, name)
+}
+
+fn move_value(from: &str, to: &str, name: &str) -> Result<()> {
+    if !is_set(to, name) {
+        if let Some(value) = vault::get(from) {
+            set(to, name, &value)?;
         }
-        vault::delete(&legacy_key(name)).map_err(Error::isolation)?;
+    }
+    if vault::has(from) {
+        vault::delete(from).map_err(Error::isolation)?;
     }
     Ok(())
 }
@@ -54,4 +78,26 @@ pub fn env(scope: &str, names: &[String]) -> Vec<(String, String)> {
         .filter(|n| is_set(scope, n))
         .filter_map(|n| vault::get(&key(scope, n)).map(|v| (n.clone(), v)))
         .collect()
+}
+
+/// Where an account's sign-in token (`claude setup-token`) is kept.
+fn account_scope(account_id: &str) -> String {
+    format!("account:{account_id}")
+}
+
+pub fn has_account_token(account_id: &str, name: &str) -> bool {
+    is_set(&account_scope(account_id), name)
+}
+
+pub fn account_token(account_id: &str, name: &str) -> Option<String> {
+    vault::get(&key(&account_scope(account_id), name))
+}
+
+pub fn set_account_token(account_id: &str, name: &str, value: Option<&str>) -> Result<()> {
+    let scope = account_scope(account_id);
+    match value {
+        Some(value) => set(&scope, name, value),
+        None if is_set(&scope, name) => delete(&scope, name),
+        None => Ok(()),
+    }
 }

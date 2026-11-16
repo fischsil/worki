@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
-import { api, type Isolation, type Project, type Remote, type SessionInfo } from "./api";
+import { api, type Isolation, type Project, type ProjectEnvironment, type Remote, type SessionInfo } from "./api";
 import { useUi } from "./store";
 
 export const keys = {
@@ -17,6 +17,8 @@ export const keys = {
   setupScripts: (projectId: string) => ["setupScripts", projectId] as const,
   sessions: ["sessions"] as const,
   agentSettings: ["agentSettings"] as const,
+  accountToken: (accountId: string) => ["accountToken", accountId] as const,
+  projectEnvironment: (projectId: string) => ["projectEnvironment", projectId] as const,
   isolationSettings: ["isolationSettings"] as const,
   allDoctor: ["doctor"] as const,
   doctor: (isolation: Isolation, projectId: string | null) => ["doctor", isolation, projectId] as const,
@@ -189,5 +191,25 @@ export function useAddProject() {
       qc.invalidateQueries({ queryKey: keys.projects });
       select(project.id, project.repoPath);
     },
+  });
+}
+
+export function useProjectEnvironment(projectId: string) {
+  return useQuery({
+    queryKey: keys.projectEnvironment(projectId),
+    queryFn: () => api.projectEnvironment(projectId),
+  });
+}
+
+/** Changes some of a project's environment settings and keeps the rest. */
+export function useUpdateProjectEnvironment(projectId: string) {
+  const qc = useQueryClient();
+  const { data: environment } = useProjectEnvironment(projectId);
+  return useMutation({
+    mutationFn: async (change: Partial<ProjectEnvironment>) => {
+      if (!environment) throw new Error("The project's settings haven't loaded yet.");
+      await api.setProjectEnvironment(projectId, { ...environment, ...change });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.projectEnvironment(projectId) }),
   });
 }

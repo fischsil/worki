@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::{
     check_output, command_path, ensure_relative, ensure_valid_env, file_contents, home_path,
     host_which, pack_home_files, stderr_text, Backend, Check, Fix, Isolation, Launch,
-    LaunchRequest, Workspace, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
+    LaunchRequest, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
 };
 
 /// sbx's kit for every sandbox: agents are installed on first use, not taken from sbx's agent
@@ -263,6 +263,12 @@ impl Container {
         self.checked(args, what).map(drop)
     }
 
+    /// The listing of `ws`'s worktree's environment, if it has one.
+    fn listed(&self, ws: &Workspace) -> Option<Listed> {
+        let name = sandbox_name(ws.worktree.as_ref()?);
+        self.list().ok()?.into_iter().find(|l| l.name == name)
+    }
+
     fn list(&self) -> Result<Vec<Listed>> {
         let all = match self.engine {
             Engine::Sbx => {
@@ -286,24 +292,21 @@ impl Container {
             .collect())
     }
 
-    /// `account_dir` is mounted and set as Claude Code's config folder for everything that runs
-    /// inside.
-    fn create(
-        &self,
-        name: &str,
-        worktree: &Path,
-        mounts: &[Mount],
-        account_dir: Option<&Path>,
-    ) -> Result<()> {
+    /// The worktree's environment with `mounts`, and from `ws`: Claude Code's config and login
+    /// folders, set for everything that runs inside, and the shared folder.
+    fn create(&self, name: &str, worktree: &Path, mounts: &[Mount], ws: &Workspace) -> Result<()> {
         let mut mounts = mounts.to_vec();
-        let mut env = None;
-        if let Some(dir) = account_dir {
-            std::fs::create_dir_all(dir)?;
-            mounts.push(Mount {
-                path: dir.to_owned(),
-                read_only: false,
-            });
-            env = Some(format!("CLAUDE_CONFIG_DIR={}", dir.display()));
+        let mut env = Vec::new();
+        let mut remapped = Vec::new();
+        let claude = claude_mounts(ws.claude_dir.as_deref(), ws.claude_login_dir.as_deref())?;
+        for (mount, var) in claude {
+            env.push(format!("{var}={}", mount.path.display()));
+            mounts.push(mount);
+        }
+        if let Some(shared) = &ws.shared_folder {
+            std::fs::create_dir_all(shared)?;
+            remapped.push(format!("{}:{PROJECT_FOLDER}", shared.display()));
+            env.push(format!("{SHARED_FOLDER_ENV}={PROJECT_FOLDER}"));
         }
         let mut args: Vec<String> = Vec::new();
         match self.engine {
@@ -320,11 +323,12 @@ impl Container {
                     ]),
                     None => args.extend(["--pull", "missing"].map(String::from)),
                 }
-                if let Some(env) = env {
+                for env in env {
                     args.extend(["--env".into(), env]);
                 }
                 args.push(self.image.clone());
                 args.extend(mounts.iter().map(Mount::sbx_arg));
+                args.extend(remapped);
             }
             _ => {
                 args.extend(["run", "-d", "--name", name].map(String::from));
@@ -335,7 +339,10 @@ impl Container {
                 for m in &mounts {
                     args.extend(["-v".into(), m.volume_arg()]);
                 }
-                if let Some(env) = env {
+                for mount in remapped {
+                    args.extend(["-v".into(), mount]);
+                }
+                for env in env {
                     args.extend(["-e".into(), env]);
                 }
                 args.extend([
@@ -348,27 +355,33 @@ impl Container {
             }
         }
         match self.checked(&args, &format!("creating the {}", self.engine.noun())) {
+            Ok(_) if self.engine == Engine::Sbx => self.start(name),
             Ok(_) => Ok(()),
             Err(e) if policy_missing(&format!("{e:#}")) => bail!(
                 "Docker Sandboxes needs a network policy before the first sandbox: open Isolation and \
                  use Set up on the network policy check, or run `sbx policy init balanced`"
             ),
             // Created before but not found in the listing (e.g. the engine changed its output
-            // format): use it rather than fail. sbx starts it on `exec`; containers need a start.
-            Err(e) if already_exists(&e) => match self.engine {
-                Engine::Sbx => Ok(()),
-                _ => self
-                    .checked(["start", name], "starting the container")
-                    .map(drop),
-            },
+            // format): use it rather than fail.
+            Err(e) if already_exists(&e) => self.start(name),
             Err(e) => Err(e),
         }
     }
 
-    /// Docker and Podman can't `exec` into a stopped container (sbx starts it itself).
+    /// sbx has no `start`; its `exec` boots a stopped sandbox. Booting it here rather than in
+    /// whatever runs in it first keeps the wait where the activity log says it is.
+    fn start(&self, name: &str) -> Result<()> {
+        let args: &[&str] = match self.engine {
+            Engine::Sbx => &["exec", name, "true"],
+            _ => &["start", name],
+        };
+        let what = format!("starting the {}", self.engine.noun());
+        self.checked(args, &what).map(drop)
+    }
+
     fn ensure_running(&self, listed: &Listed) -> Result<()> {
-        if self.engine != Engine::Sbx && !listed.running {
-            self.checked(["start", &listed.name], "starting the container")?;
+        if !listed.running {
+            self.start(&listed.name)?;
         }
         Ok(())
     }
@@ -401,18 +414,27 @@ impl Container {
         Ok(child.wait_with_output()?)
     }
 
-    /// The account folder the bound environment was created with: `Some(None)` for none, `None`
-    /// when it can't be told.
-    fn account_dir(&self) -> Option<Option<PathBuf>> {
-        const MARK: &str = "worki-account-dir:";
-        let script = format!(r#"bash -lc 'printf "\n{MARK}%s\n" "$CLAUDE_CONFIG_DIR"'"#);
+    /// What the bound environment was created with, or `None` when it can't be told.
+    fn made_with(&self) -> Option<MadeWith> {
+        const MARK: &str = "worki-made-with:";
+        let script = format!(
+            r#"bash -lc 'printf "\n{MARK}%s\t%s\t%s\n" "${CONFIG_DIR_ENV}" "${LOGIN_DIR_ENV}" "${SHARED_FOLDER_ENV}"'"#
+        );
         let out = self
             .sh(&script, &[], None)
             .ok()
             .filter(|o| o.status.success())?;
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let dir = stdout.lines().find_map(|l| l.strip_prefix(MARK))?;
-        Some((!dir.is_empty()).then(|| PathBuf::from(dir)))
+        let mut fields = stdout
+            .lines()
+            .find_map(|l| l.strip_prefix(MARK))?
+            .split('\t');
+        let mut path = || fields.next().filter(|p| !p.is_empty()).map(PathBuf::from);
+        Some(MadeWith {
+            claude_dir: path(),
+            claude_login_dir: path(),
+            shared_folder: path().is_some(),
+        })
     }
 
     /// Times a TLS connection to Anthropic's API from a throwaway container of the image.
@@ -720,6 +742,48 @@ impl Mount {
     }
 }
 
+const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
+const LOGIN_DIR_ENV: &str = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
+/// Where the project's shared folder is, in environments that have one.
+const SHARED_FOLDER_ENV: &str = "WORKI_PROJECT_DIR";
+
+/// Claude Code's config and login folders, made if missing, as writable mounts with the variable
+/// that points Claude Code at each.
+fn claude_mounts(
+    config: Option<&Path>,
+    login: Option<&Path>,
+) -> Result<Vec<(Mount, &'static str)>> {
+    let mut out = Vec::new();
+    for (dir, var) in [(config, CONFIG_DIR_ENV), (login, LOGIN_DIR_ENV)] {
+        let Some(dir) = dir else { continue };
+        std::fs::create_dir_all(dir)?;
+        let mount = Mount {
+            path: dir.to_owned(),
+            read_only: false,
+        };
+        out.push((mount, var));
+    }
+    Ok(out)
+}
+
+/// What of a [`Workspace`] an environment is made with, and replaced when it changes.
+#[derive(Debug, PartialEq, Eq)]
+struct MadeWith {
+    claude_dir: Option<PathBuf>,
+    claude_login_dir: Option<PathBuf>,
+    shared_folder: bool,
+}
+
+impl MadeWith {
+    fn of(ws: &Workspace) -> Self {
+        Self {
+            claude_dir: ws.claude_dir.clone(),
+            claude_login_dir: ws.claude_login_dir.clone(),
+            shared_folder: ws.shared_folder.is_some(),
+        }
+    }
+}
+
 /// The worktree writable, and of the repository's `.git` only what committing and fetching
 /// write: objects, refs, reflogs and the worktree's own admin folder (HEAD, index, FETCH_HEAD).
 /// Everything else in `.git` is read-only, above all config files (including
@@ -946,35 +1010,49 @@ pub struct AccountRun {
     name: String,
 }
 
-/// Runs `command` in an [`AccountRun`] for `dir`, with Docker, else Podman.
-pub fn account_launch(dir: &Path, command: &str, interactive: bool) -> Result<AccountRun> {
+/// Where an account keeps its login: a folder of its own inside the account's, so environments
+/// can share the login without anything else of the account. Moves a login from where older
+/// versions kept it, the account's folder itself.
+pub fn account_login_dir(account_dir: &Path) -> Result<PathBuf> {
+    const LOGIN: &str = ".credentials.json";
+    let dir = account_dir.join("login");
+    std::fs::create_dir_all(&dir)?;
+    let (old, new) = (account_dir.join(LOGIN), dir.join(LOGIN));
+    if old.exists() && !new.exists() {
+        std::fs::rename(&old, &new)?;
+    }
+    Ok(dir)
+}
+
+/// Runs `command` with `config` as Claude Code's config folder and, when given, `login` as where
+/// it keeps its login, in a throwaway container with Docker, else Podman.
+pub fn account_launch(
+    config: &Path,
+    login: Option<&Path>,
+    command: &str,
+    interactive: bool,
+) -> Result<AccountRun> {
     static RUNS: AtomicU64 = AtomicU64::new(0);
     let engine = [Engine::Docker, Engine::Podman]
         .into_iter()
         .map(|engine| Container::new(engine, DEFAULT_CONTAINER_IMAGE.into()))
         .find(|c| c.engine.binary().is_ok() && c.engine_running() && c.image_present())
         .context("accounts sign in with Docker or Podman: open Isolation and set one up")?;
-    std::fs::create_dir_all(dir)?;
     let name = format!(
         "worki_account-{}-{}",
         std::process::id(),
         RUNS.fetch_add(1, Ordering::SeqCst)
     );
-    let volume = Mount {
-        path: dir.to_owned(),
-        read_only: false,
-    }
-    .volume_arg();
     let mut args: Vec<String> = ["run", "--rm", if interactive { "-it" } else { "-i" }]
         .map(String::from)
         .into();
+    args.extend(["--name".into(), name.clone()]);
+    let mut env = Vec::new();
+    for (mount, var) in claude_mounts(Some(config), login)? {
+        args.extend(["-v".into(), mount.volume_arg(), "-e".into(), var.into()]);
+        env.push((var.to_owned(), mount.path.display().to_string()));
+    }
     args.extend([
-        "--name".into(),
-        name.clone(),
-        "-v".into(),
-        volume,
-        "-e".into(),
-        "CLAUDE_CONFIG_DIR".into(),
         DEFAULT_CONTAINER_IMAGE.into(),
         "bash".into(),
         "-lc".into(),
@@ -983,7 +1061,7 @@ pub fn account_launch(dir: &Path, command: &str, interactive: bool) -> Result<Ac
     let launch = Launch {
         program: engine.engine.binary()?.display().to_string(),
         args,
-        env: vec![("CLAUDE_CONFIG_DIR".into(), dir.display().to_string())],
+        env,
         clear_env: false,
         cwd: std::env::temp_dir(),
     };
@@ -1075,15 +1153,15 @@ impl Backend for Container {
             self.ensure_running(&listed)?;
             let outdated = || {
                 self.bound_to(&listed)
-                    .account_dir()
-                    .is_some_and(|dir| dir != ws.account_dir)
+                    .made_with()
+                    .is_some_and(|made| made != MadeWith::of(ws))
             };
             if !ws.replace_outdated || !outdated() {
                 return Ok(());
             }
             self.remove_all(
                 std::slice::from_ref(&name),
-                &format!("replacing the {} for another account", self.engine.noun()),
+                &format!("replacing the {} with its new settings", self.engine.noun()),
             )?;
         }
         if !self.image_present() {
@@ -1094,7 +1172,7 @@ impl Backend for Container {
         }
         let admin = admin_dir(worktree);
         let mounts = mounts(&ws.repo, worktree, admin.as_deref());
-        self.create(&name, worktree, &mounts, ws.account_dir.as_deref())
+        self.create(&name, worktree, &mounts, ws)
     }
 
     fn save_template(&self, worktree: &Path, tag: &str) -> Result<Isolation> {
@@ -1446,20 +1524,17 @@ impl Backend for Container {
     }
 
     fn instance_for(&self, ws: &Workspace) -> Option<Box<dyn Backend>> {
-        let name = sandbox_name(ws.worktree.as_ref()?);
-        let listed = self.list().ok()?.into_iter().find(|l| l.name == name)?;
+        let listed = self.listed(ws)?;
         self.ensure_running(&listed).ok()?;
         Some(Box::new(self.bound_to(&listed)))
     }
 
     fn instance_exists(&self, ws: &Workspace) -> bool {
-        let Some(worktree) = &ws.worktree else {
-            return true;
-        };
-        let name = sandbox_name(worktree);
-        self.list()
-            .map(|l| l.iter().any(|s| s.name == name))
-            .unwrap_or(false)
+        ws.worktree.is_none() || self.listed(ws).is_some()
+    }
+
+    fn instance_stopped(&self, ws: &Workspace) -> bool {
+        self.listed(ws).is_some_and(|l| !l.running)
     }
 
     fn read_only_home_paths(&self, paths: &[PathBuf]) -> Vec<PathBuf> {
@@ -1525,6 +1600,37 @@ impl Backend for Container {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environments_are_replaced_when_what_they_were_made_with_changes() {
+        let ws = Workspace {
+            repo: "/r".into(),
+            worktree_root: "/w".into(),
+            worktree: Some("/w/a".into()),
+            claude_dir: Some("/own".into()),
+            claude_login_dir: Some("/acct".into()),
+            shared_folder: Some("/shared".into()),
+            replace_outdated: true,
+        };
+        let made = MadeWith::of(&ws);
+        assert_eq!(made, MadeWith::of(&ws.clone()));
+        for changed in [
+            Workspace {
+                shared_folder: None,
+                ..ws.clone()
+            },
+            Workspace {
+                claude_dir: Some("/own-wt".into()),
+                ..ws.clone()
+            },
+            Workspace {
+                claude_login_dir: Some("/other".into()),
+                ..ws.clone()
+            },
+        ] {
+            assert_ne!(made, MadeWith::of(&changed));
+        }
+    }
 
     #[test]
     fn names_are_stable_valid_and_distinct() {

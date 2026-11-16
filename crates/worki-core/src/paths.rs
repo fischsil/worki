@@ -10,6 +10,36 @@ pub fn account_dir(id: &str) -> PathBuf {
     data_dir().join("accounts").join(slug(id))
 }
 
+/// What worki keeps for a project outside its repository.
+pub fn project_dir(project_id: &str) -> PathBuf {
+    data_dir().join("projects").join(slug(project_id))
+}
+
+/// The project's own Claude Code files: its settings, `CLAUDE.md` and skills, and with
+/// [`crate::AccountSignIn::Token`] everything else Claude Code keeps too.
+pub fn project_claude_dir(project_id: &str) -> PathBuf {
+    project_dir(project_id).join("claude")
+}
+
+/// The folder all the project's worktrees share ([`crate::ProjectEnvironment::shared_folder`]).
+pub fn project_shared_dir(project_id: &str) -> PathBuf {
+    project_dir(project_id).join("shared")
+}
+
+/// What worki keeps for one of the project's worktrees.
+pub fn worktree_dir(project_id: &str, worktree: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let name = worktree
+        .file_name()
+        .map(|n| slug(&n.to_string_lossy()))
+        .unwrap_or_default();
+    let hash = Sha256::digest(worktree.to_string_lossy().as_bytes());
+    let id: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    project_dir(project_id)
+        .join("worktrees")
+        .join(format!("{name}-{id}"))
+}
+
 pub fn default_worktree_root(project_name: &str) -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -57,6 +87,20 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worktree_dirs_are_per_path() {
+        let a = worktree_dir("p", Path::new("/w/feat/login"));
+        let b = worktree_dir("p", Path::new("/w/feat-login"));
+        assert_ne!(a, b);
+        assert_eq!(a, worktree_dir("p", Path::new("/w/feat/login")));
+        assert!(a.starts_with(project_dir("p").join("worktrees")));
+        assert!(a
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("login-"));
+    }
 
     #[test]
     fn slugs() {

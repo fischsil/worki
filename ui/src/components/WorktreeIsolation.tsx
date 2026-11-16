@@ -26,7 +26,7 @@ import { useUi } from "../lib/store";
 import { toast } from "../lib/toast";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
-import { Button, Dialog, Field, WarnText } from "./ui";
+import { Button, Dialog, WarnText } from "./ui";
 
 /** Where this worktree's agents run, once the settings have loaded. */
 export function useEffectiveIsolation(project: Project, worktree: Worktree): Isolation | undefined {
@@ -121,15 +121,14 @@ function WorktreeIsolationDialog({
         </>
       }
     >
-      <Field label="Where agents in this worktree run">
-        <IsolationPicker
-          value={choice}
-          onChange={setChoice}
-          allowInherit
-          inheritName="Project default"
-          inheritLabel={projectDefault ? isolationLabel(projectDefault) : undefined}
-        />
-      </Field>
+      <IsolationPicker
+        label="Where agents in this worktree run"
+        value={choice}
+        onChange={setChoice}
+        allowInherit
+        inheritName="Project default"
+        inheritLabel={projectDefault ? isolationLabel(projectDefault) : undefined}
+      />
       {!changed && isContainer(current.kind === "inherit" ? projectDefault : current) && (
         <div className="flex items-center gap-3 rounded-md border border-line p-3">
           <p className="flex-1 text-xs leading-relaxed text-muted">

@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { api, errorMessage, type Snapshot, type SnapshotEngine } from "../lib/api";
 import { useSnapshots } from "../lib/queries";
-import { ErrorText, IconButton } from "./ui";
+import { ErrorText, IconButton, PageTitle } from "./ui";
 
 const ENGINES: Record<SnapshotEngine, string> = {
   dockerSandbox: "Docker Sandboxes",
@@ -23,13 +23,12 @@ export function SnapshotSettings() {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">Snapshots</h2>
+      <PageTitle
+        title="Snapshots"
+        info="Sandboxes and containers saved with Save snapshot in a worktree's isolation, newest first. Delete the ones no project or worktree starts from anymore to free disk space. Engines that aren't running aren't listed."
+      />
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
-        <div className="flex items-start gap-3">
-          <p className="flex-1 text-xs leading-relaxed text-faint">
-            Sandboxes and containers saved with Save snapshot in a worktree's isolation, newest first. Delete the ones no project or
-            worktree starts from anymore to free disk space. Engines that aren't running aren't listed.
-          </p>
+        <div className="flex items-start justify-end gap-3">
           <IconButton label="Refresh" onClick={() => refetch()}>
             <RefreshCw size={13} className={isFetching ? "animate-spin" : undefined} />
           </IconButton>

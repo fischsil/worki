@@ -10,7 +10,8 @@ use worki_core::launch::{
     ChatAgent, ClaudeOptions, CHAT_PROMPT,
 };
 use worki_core::{
-    secrets, AgentProfile, AgentSettings, Host, Isolation, JsonObject, Project, SavedSession,
+    secrets, AccountSignIn, AgentProfile, AgentSettings, Host, Isolation, JsonObject, Project,
+    SavedSession,
 };
 use worki_isolation::ssh::{Ssh, SshTarget};
 use worki_isolation::{LaunchRequest, SessionMeta};
@@ -129,7 +130,7 @@ async fn start_session(
         remote_control,
         claude_settings,
         token_name,
-        account_dir,
+        login_dir,
         ..
     } = prepare(
         state,
@@ -150,7 +151,7 @@ async fn start_session(
         &worktree_path,
         env.clone(),
         token_name,
-        account_dir,
+        login_dir,
     );
     let req = session_request(
         profile.as_ref(),
@@ -217,13 +218,13 @@ async fn start_session(
 
 /// How to read who a Claude Code session is signed in as: `claude auth status` where it runs,
 /// so it's the account actually in use, with the name the user gave its sign-in token and the
-/// account folder it signs in with.
+/// account login folder it signs in with.
 #[derive(Clone)]
 struct AccountCheck {
     isolation: Isolation,
     req: LaunchRequest,
     token_name: Option<String>,
-    account_dir: Option<PathBuf>,
+    login_dir: Option<PathBuf>,
 }
 
 impl AccountCheck {
@@ -234,7 +235,7 @@ impl AccountCheck {
         worktree: &Path,
         env: Vec<(String, String)>,
         token_name: Option<String>,
-        account_dir: Option<PathBuf>,
+        login_dir: Option<PathBuf>,
     ) -> Option<Self> {
         let profile = profile.filter(|p| p.executable() == Some("claude"))?;
         let claude = profile.command.split_whitespace().next()?;
@@ -249,7 +250,7 @@ impl AccountCheck {
                 session: None,
             },
             token_name,
-            account_dir,
+            login_dir,
         })
     }
 }
@@ -271,7 +272,7 @@ fn check_account(state: &AppState, id: &str, check: AccountCheck) {
     run_check(&state.app, id, check);
 }
 
-/// Checks the running sessions that sign in with the account in `dir` again.
+/// Checks the running sessions that sign in with the account login folder `dir` again.
 pub fn recheck_account(app: &tauri::AppHandle, dir: &Path) {
     let running: Vec<String> = app
         .state::<AppState>()
@@ -287,7 +288,7 @@ pub fn recheck_account(app: &tauri::AppHandle, dir: &Path) {
         checks.retain(|id, _| running.contains(id));
         checks
             .iter()
-            .filter(|(_, check)| check.account_dir.as_deref() == Some(dir))
+            .filter(|(_, check)| check.login_dir.as_deref() == Some(dir))
             .map(|(id, check)| (id.clone(), check.clone()))
             .collect()
     };
@@ -354,8 +355,8 @@ struct Prepared {
     claude_settings: JsonObject,
     /// The name the user gave the sign-in token the session gets, if any.
     token_name: Option<String>,
-    /// The folder of the account the session signs in with, if it has one.
-    account_dir: Option<PathBuf>,
+    /// The account login folder the session signs in with, if it has one.
+    login_dir: Option<PathBuf>,
 }
 
 /// Names of the events the session start sends; `ui/src/lib/events.ts` has the same.
@@ -483,13 +484,17 @@ async fn prepare_steps(
     if isolation.is_container() {
         log.step("Getting the worktree's container ready…");
     }
-    projects
+    let (_, home) = projects
         .grant_access_with(&project, Some(worktree_path), !in_use)
         .await
         .map_err(err)?;
+    let with_token = home
+        .as_ref()
+        .is_some_and(|h| h.sign_in == AccountSignIn::Token);
+    let remote_control = settings.remote_control && !with_token;
     if let Some(p) = &profile {
         ready_agent(state, &project, worktree_path, &isolation, p, &log).await?;
-        if settings.remote_control && p.executable() == Some("claude") {
+        if remote_control && p.executable() == Some("claude") {
             log.step("Allowing Remote Control…");
             allow_remote_control(&isolation).await;
         }
@@ -501,16 +506,42 @@ async fn prepare_steps(
         .map(|p| p.name.clone())
         .unwrap_or_else(|| "Shell".into());
     let mut env = session_env(&id, worktree_path);
-    env.extend(projects.secret_env(&isolation).map_err(err)?);
-    let account_dir = projects.account_dir(&project, &isolation).map_err(err)?;
-    if let Some(dir) = &account_dir {
+    env.extend(
+        projects
+            .secret_env(Some(&project.id), &isolation)
+            .map_err(err)?,
+    );
+    if let Some(home) = &home {
         if profile.as_ref().and_then(AgentProfile::executable) == Some("claude") {
-            let (dir, worktree) = (dir.clone(), worktree_path.to_owned());
-            blocking(move || worki_core::agents::trust_in_account(&dir, &worktree)).await?;
+            let (dir, worktree) = (home.dir.clone(), worktree_path.to_owned());
+            blocking(move || worki_core::agents::trust_in_config_dir(&dir, &worktree)).await?;
         }
-        let token = worki_core::agents::kit("claude").and_then(|k| k.sign_in);
-        env.retain(|(name, _)| token.is_none_or(|t| name != t.secret));
+        if let Some(secret) = worki_core::agents::claude_sign_in_secret() {
+            match home.sign_in {
+                AccountSignIn::Session => {}
+                AccountSignIn::Folder => {
+                    env.retain(|(name, _)| name != secret);
+                    // The login is the account's, shared with its other projects: switching it
+                    // from one session would switch them all. Sign in again under Settings ›
+                    // Accounts instead.
+                    env.extend(
+                        ["DISABLE_LOGIN_COMMAND", "DISABLE_LOGOUT_COMMAND"]
+                            .map(|var| (var.to_owned(), "1".to_owned())),
+                    );
+                }
+                AccountSignIn::Token => {
+                    env.retain(|(name, _)| name != secret);
+                    let token = home
+                        .account
+                        .as_deref()
+                        .and_then(|a| secrets::account_token(a, secret))
+                        .ok_or("This project signs in with its account's token, but none is stored. Add it in the project's settings.")?;
+                    env.push((secret.to_owned(), token));
+                }
+            }
+        }
     }
+    let login_dir = home.and_then(|h| h.login_dir);
     let confined = isolation.is_confined();
     let token_name = env
         .iter()
@@ -524,14 +555,14 @@ async fn prepare_steps(
         title,
         env,
         confined,
-        remote_control: settings.remote_control,
+        remote_control,
         claude_settings: if confined {
             settings.claude_settings
         } else {
             JsonObject::new()
         },
         token_name,
-        account_dir,
+        login_dir,
     })
 }
 
@@ -849,7 +880,7 @@ async fn start_chat(
         remote_control,
         claude_settings,
         token_name,
-        account_dir,
+        login_dir,
     } = prepare(state, &project_id, &worktree_path, Some(&profile_id), id).await?;
     let profile = profile.ok_or("pick an agent to chat with")?;
     let claude = ClaudeOptions {
@@ -863,7 +894,7 @@ async fn start_chat(
         &worktree_path,
         env.clone(),
         token_name,
-        account_dir,
+        login_dir,
     );
     let (agent, req) =
         chat_request(&profile, &worktree_path, env, &id, &claude).ok_or_else(|| {

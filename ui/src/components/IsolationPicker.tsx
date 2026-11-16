@@ -7,7 +7,7 @@ import {
   type ProjectIsolation,
 } from "../lib/api";
 import { useEnvironmentTemplates } from "../lib/queries";
-import { Input, Select } from "./ui";
+import { Field, Input, Select } from "./ui";
 
 type Kind = ProjectIsolation["kind"];
 
@@ -21,8 +21,8 @@ const options: { kind: Kind; label: string; hint: string }[] = [
   },
   {
     kind: "dockerSandbox",
-    label: "Docker Sandbox (sbx)",
-    hint: "Each worktree gets its own Docker Sandbox, a separate Linux microVM. Needs Docker Sandboxes (sbx).",
+    label: "Docker Sandboxes",
+    hint: "Each worktree gets its own sandbox, a separate Linux microVM. Needs Docker Sandboxes (sbx).",
   },
   {
     kind: "docker",
@@ -37,12 +37,14 @@ const options: { kind: Kind; label: string; hint: string }[] = [
 ];
 
 export function IsolationPicker<T extends ProjectIsolation>({
+  label,
   value,
   onChange,
   allowInherit,
   inheritLabel,
   inheritName = "Global default",
 }: {
+  label: string;
   value: T;
   onChange: (v: T) => void;
   allowInherit?: boolean;
@@ -67,47 +69,46 @@ export function IsolationPicker<T extends ProjectIsolation>({
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <Select
-        value={value.kind}
-        onChange={(e) => pick(e.target.value as Kind)}
-        className="h-8 w-full text-[13px]"
-      >
-        {visible.map((o) => (
-          <option key={o.kind} value={o.kind}>
-            {o.kind === "inherit" ? (inheritLabel ? `${inheritName} (${inheritLabel})` : inheritName) : o.label}
-          </option>
-        ))}
-      </Select>
-      {current?.hint && <p className="text-xs text-faint">{current.hint}</p>}
+    <div className="flex flex-col gap-4">
+      <Field label={label} hint={current?.hint}>
+        <Select
+          value={value.kind}
+          onChange={(e) => pick(e.target.value as Kind)}
+          className="h-8 w-full text-[13px]"
+        >
+          {visible.map((o) => (
+            <option key={o.kind} value={o.kind}>
+              {o.kind === "inherit" ? (inheritLabel ? `${inheritName} (${inheritLabel})` : inheritName) : o.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
       {value.kind === "macUser" && (
-        <label className="flex items-center gap-2">
-          <span className="text-xs text-muted">User name</span>
+        <Field label="User name">
           <Input
-            className="max-w-56 font-mono text-xs"
+            className="h-8 font-mono text-[13px]"
             value={value.user}
             onChange={(e) => onChange({ kind: "macUser", user: e.target.value.trim() } as T)}
           />
-        </label>
+        </Field>
       )}
       {(value.kind === "docker" || value.kind === "podman") && (
-        <label className="flex flex-col gap-1">
-          <span className="flex items-center gap-2">
-            <span className="text-xs text-muted">Image</span>
-            <TemplateSelect
-              isolation={value}
-              value={value.image}
-              fallback={DEFAULT_CONTAINER_IMAGE}
-              fallbackLabel={DEFAULT_CONTAINER_IMAGE}
-              onChange={(image) => onChange({ kind: value.kind, image: image ?? DEFAULT_CONTAINER_IMAGE } as T)}
-            />
-          </span>
-          <span className="text-xs text-faint">
-            {value.image === DEFAULT_CONTAINER_IMAGE
+        <Field
+          label="Image"
+          hint={
+            value.image === DEFAULT_CONTAINER_IMAGE
               ? "worki's agent image (Debian, git, gh, node, Claude Code), built by Set up below."
-              : "Any image with bash and git."}
-          </span>
-        </label>
+              : "Any image with bash and git."
+          }
+        >
+          <TemplateSelect
+            isolation={value}
+            value={value.image}
+            fallback={DEFAULT_CONTAINER_IMAGE}
+            fallbackLabel={DEFAULT_CONTAINER_IMAGE}
+            onChange={(image) => onChange({ kind: value.kind, image: image ?? DEFAULT_CONTAINER_IMAGE } as T)}
+          />
+        </Field>
       )}
       {value.kind === "dockerSandbox" && (
         <SandboxTemplate
@@ -127,22 +128,18 @@ function SandboxTemplate({
   onChange: (template: string | null) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="flex items-center gap-2">
-        <span className="text-xs text-muted">Start from</span>
-        <TemplateSelect
-          isolation={{ kind: "dockerSandbox" }}
-          value={template}
-          fallback={null}
-          fallbackLabel="Fresh sandbox"
-          onChange={onChange}
-        />
-      </span>
-      <span className="text-xs text-faint">
-        Agents are installed in a worktree's sandbox the first time they start there. Save a snapshot of one to give new
-        worktrees everything installed in it.
-      </span>
-    </label>
+    <Field
+      label="Start from"
+      hint="Agents are installed in a worktree's sandbox the first time they start there. Save a snapshot of one to give new worktrees everything installed in it."
+    >
+      <TemplateSelect
+        isolation={{ kind: "dockerSandbox" }}
+        value={template}
+        fallback={null}
+        fallbackLabel="Fresh sandbox"
+        onChange={onChange}
+      />
+    </Field>
   );
 }
 
@@ -169,7 +166,7 @@ function TemplateSelect({
   const [typing, setTyping] = useState(false);
   const key = value ?? "";
   return (
-    <span className="flex min-w-0 items-center gap-2">
+    <span className="flex min-w-0 flex-col gap-2">
       <Select
         value={typing ? OTHER : key}
         onChange={(e) => {
@@ -177,7 +174,7 @@ function TemplateSelect({
           setTyping(picked === OTHER);
           if (picked !== OTHER) onChange(picked === "" ? fallback : picked);
         }}
-        className="h-8 max-w-72 font-mono text-xs"
+        className="h-8 w-full font-mono text-[13px]"
       >
         <option value={fallback ?? ""}>{fallbackLabel}</option>
         {listed.map((t) => (
@@ -190,7 +187,7 @@ function TemplateSelect({
       {typing && (
         <Input
           autoFocus
-          className="max-w-56 font-mono text-xs"
+          className="h-8 font-mono text-[13px]"
           placeholder="name:tag"
           onBlur={(e) => {
             const v = e.target.value.trim();

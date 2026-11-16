@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { createPortal } from "react-dom";
-import { Star, X } from "lucide-react";
+import { Info, Star, Users, X } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -115,13 +115,134 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   );
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
+/** An info icon that shows `children` in a popup below it when clicked. A click outside or Escape
+ * closes it. */
+export function InfoTip({ children }: { children: ReactNode }) {
+  const icon = useRef<HTMLButtonElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null);
+
+  function toggle() {
+    if (at) return setAt(null);
+    const r = icon.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = 320;
+    setAt({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left - 8, window.innerWidth - width - 8)) });
+  }
+
+  useEffect(() => {
+    if (!at) return;
+    const inside = (t: EventTarget | null) =>
+      icon.current?.contains(t as Node) || popup.current?.contains(t as Node);
+    const click = (e: MouseEvent) => !inside(e.target) && setAt(null);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      setAt(null);
+    };
+    const scroll = (e: Event) => !popup.current?.contains(e.target as Node) && setAt(null);
+    window.addEventListener("mousedown", click);
+    window.addEventListener("keydown", esc, true);
+    window.addEventListener("scroll", scroll, true);
+    return () => {
+      window.removeEventListener("mousedown", click);
+      window.removeEventListener("keydown", esc, true);
+      window.removeEventListener("scroll", scroll, true);
+    };
+  }, [at]);
+
+  return (
+    <>
+      <button
+        ref={icon}
+        type="button"
+        aria-label="More information"
+        aria-expanded={!!at}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          toggle();
+        }}
+        className={clsx(
+          "inline-flex size-4 shrink-0 items-center justify-center rounded-full hover:text-fg",
+          at ? "text-accent" : "text-faint",
+        )}
+      >
+        <Info size={13} />
+      </button>
+      {at &&
+        createPortal(
+          <div
+            ref={popup}
+            role="dialog"
+            aria-label="More information"
+            style={{ top: at.top, left: at.left }}
+            className="fixed z-[60] w-80 rounded-lg border border-line bg-elevated px-3 py-2 text-[13px] leading-relaxed font-normal text-muted shadow-lg"
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
+export function InfoText({ children }: { children: ReactNode }) {
+  return <span className="block text-[13px] leading-relaxed text-faint">{children}</span>;
+}
+
+/** A labelled control. `hint` explains it in a popup on its info icon; `note` is always shown, for
+ * what the person needs to see (an error, a consequence of the current choice). */
+export function Field({
+  label,
+  hint,
+  note,
+  children,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  note?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted">{label}</span>
+      <span className="flex items-center gap-2 text-[13px] font-medium text-muted">
+        {label}
+        {hint && <InfoTip>{hint}</InfoTip>}
+      </span>
       {children}
-      {hint && <span className="text-xs text-faint">{hint}</span>}
+      {note && <InfoText>{note}</InfoText>}
     </label>
+  );
+}
+
+/** A page's title, with what the page is for in a popup on its info icon. */
+export function PageTitle({ title, info }: { title: string; info?: ReactNode }) {
+  return (
+    <h2 className="flex items-center gap-2 px-6 pt-5 pb-3 text-[15px] font-semibold">
+      {title}
+      {info && <InfoTip>{info}</InfoTip>}
+    </h2>
+  );
+}
+
+/** Marks something other projects or worktrees see too, such as a login or a folder. */
+export function SharedBadge({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-warn/15 px-1.5 py-px text-[11px] font-medium text-warn">
+      <Users size={10} />
+      {children}
+    </span>
+  );
+}
+
+/** Related settings under a small heading. */
+export function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="text-[11px] font-semibold tracking-wide text-faint uppercase">{title}</h3>
+      {children}
+    </div>
   );
 }
 
@@ -129,11 +250,14 @@ export function Checkbox({
   checked,
   onChange,
   disabled,
+  hint,
   children,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  /** Explains the option in a popup on its info icon. */
+  hint?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -145,19 +269,25 @@ export function Checkbox({
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
-      <span>{children}</span>
+      <span className="inline-flex min-w-0 items-center gap-2">
+        {children}
+        {hint && <InfoTip>{hint}</InfoTip>}
+      </span>
     </label>
   );
 }
 
 export function Dialog({
   title,
+  info,
   onClose,
   children,
   footer,
   width = 460,
 }: {
   title: string;
+  /** What the dialog is for, in a popup next to its title in the Settings window. */
+  info?: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
@@ -174,7 +304,7 @@ export function Dialog({
   if (embedded) {
     return (
       <section aria-label={title} className="flex min-h-0 flex-1 flex-col">
-        <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">{title}</h2>
+        <PageTitle title={title} info={info} />
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">{children}</div>
         {footer && <div className="flex justify-end gap-2 border-t border-line px-6 py-3">{footer}</div>}
       </section>

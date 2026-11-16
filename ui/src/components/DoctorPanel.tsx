@@ -52,7 +52,7 @@ export function DoctorPanel({ isolation, projectId }: { isolation: Isolation; pr
           <RefreshCw size={12} className={clsx(isFetching && "animate-spin")} />
         </IconButton>
       </div>
-      {!checks && isFetching && <p className="px-1 py-1 text-xs text-faint">Running checks…</p>}
+      {!checks && isFetching && <p className="px-1 py-1 text-[13px] text-faint">Running checks…</p>}
       {error && <ErrorText>{String(error)}</ErrorText>}
       {checks?.map((c) => (
         <div key={c.id}>
@@ -63,7 +63,7 @@ export function DoctorPanel({ isolation, projectId }: { isolation: Isolation; pr
         </div>
       ))}
       {isolation.kind === "macUser" && checks?.some((c) => c.fix === "provision") && (
-        <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
+        <p className="px-1 pt-1 text-[13px] leading-relaxed text-faint">
           Setup creates a hidden user and a sudoers rule that only lets you run commands as worki agent users. macOS
           asks for an administrator password once.
         </p>
@@ -91,7 +91,7 @@ function CheckRow({
       )}
       <div className="min-w-0 flex-1">
         <div className="text-[13px]">{check.label}</div>
-        {check.detail && <div className="selectable text-xs break-words text-faint">{check.detail}</div>}
+        {check.detail && <div className="selectable text-[13px] break-words text-faint">{check.detail}</div>}
       </div>
       {check.fix && (
         <Button className="shrink-0" onClick={() => onFix(check)} disabled={running !== null}>

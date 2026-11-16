@@ -20,9 +20,7 @@ import { useCopy } from "../lib/useCopy";
 import { type PendingSignIn, useSignIns } from "../lib/signIns";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
-import { identityOf, tipOfTheMoment, usePlayful } from "../lib/playful";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
-import { AgentDot } from "./Playful";
 import { AgentStatus } from "./AgentStatus";
 import { ChatView } from "./ChatView";
 import { TerminalView } from "./TerminalView";
@@ -144,8 +142,6 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const other: SessionKind = agentView === "chat" ? "terminal" : "chat";
 
   const signIn = useSignIns((s) => s.byWorktree[worktree.path]);
-  const playful = usePlayful();
-
   if (sessions.length === 0) {
     if (signIn) return <SignInCard signIn={signIn} />;
     return (
@@ -181,7 +177,6 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
             </>
           )}
         </p>
-        {playful && !starting && <p className="max-w-sm text-center text-[11px] text-muted">💡 {tipOfTheMoment()}</p>}
         <ErrorText>{error}</ErrorText>
       </div>
     );
@@ -300,7 +295,6 @@ function SessionTab({
   onClose: () => void;
 }) {
   const running = session.state.kind === "running";
-  const identity = identityOf(session, usePlayful());
   return (
     <div
       onClick={onSelect}
@@ -310,23 +304,16 @@ function SessionTab({
         selected ? "bg-selected text-fg" : "text-muted hover:bg-hover hover:text-fg",
       )}
     >
-      {identity ? (
-        <AgentDot session={session} />
-      ) : (
-        <ActivityDot
-          state={sessionState(session)}
-          title={session.attention ? `Waiting: ${session.attention}` : stateLabel[sessionState(session)]}
-        />
-      )}
+      <ActivityDot
+        state={sessionState(session)}
+        title={session.attention ? `Waiting: ${session.attention}` : stateLabel[sessionState(session)]}
+      />
       {session.kind === "chat" && (
         <Hint title="Chat: worki draws the conversation" className="-mx-0.5 text-muted">
           <MessageSquare size={11} />
         </Hint>
       )}
-      <span className="max-w-44 truncate">
-        {identity && <>{identity.name} · </>}
-        <span className={clsx(identity && "text-faint")}>{session.title}</span>
-      </span>
+      <span className="max-w-44 truncate">{session.title}</span>
       {yolo && (
         <span
           className="rounded bg-warn/15 px-1 text-[10px] font-semibold text-warn"

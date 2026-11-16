@@ -385,6 +385,46 @@ pub struct AgentSettings {
     pub project_accounts: BTreeMap<String, String>,
     #[serde(default)]
     pub default_account: Option<String>,
+    /// How a project's sessions sign in to its account, by project id, where it isn't
+    /// [`AccountSignIn::Folder`].
+    #[serde(default)]
+    pub project_sign_in: BTreeMap<String, AccountSignIn>,
+}
+
+/// What a project's containers and sandboxes get besides its worktree.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEnvironment {
+    /// A folder all the project's worktrees share, for whatever they keep there (a build
+    /// cache, say).
+    #[serde(default)]
+    pub shared_folder: bool,
+    #[serde(default)]
+    pub claude_files: FilesScope,
+}
+
+/// Who shares a set of files: the whole project, or each worktree its own.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FilesScope {
+    #[default]
+    Project,
+    Worktree,
+}
+
+/// How a project's sessions sign in to its account in containers and sandboxes.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AccountSignIn {
+    /// With the account's login, which projects on the account share; nothing else is.
+    #[default]
+    Folder,
+    /// With the account's long-lived token (`claude setup-token`). The token can only run the
+    /// model: no Remote Control.
+    Token,
+    /// Without an account: sessions sign in themselves, and each worktree keeps its Claude Code
+    /// folder and that login to itself. Also what projects get when no account is set up.
+    Session,
 }
 
 /// A Claude Code login projects can pick. Who it signs in as is read from the folder with
@@ -454,6 +494,7 @@ impl Default for AgentSettings {
             accounts: Vec::new(),
             project_accounts: BTreeMap::new(),
             default_account: None,
+            project_sign_in: BTreeMap::new(),
         }
     }
 }
@@ -464,6 +505,25 @@ impl AgentSettings {
             .get(scope)
             .map(Vec::as_slice)
             .unwrap_or_default()
+    }
+
+    /// The account a project's agents use: its own choice, else the default account.
+    pub fn account_of(&self, project_id: &str) -> Option<&String> {
+        self.project_accounts
+            .get(project_id)
+            .or(self.default_account.as_ref())
+    }
+
+    /// How a project's sessions sign in: its own choice, signing in themselves without an account.
+    pub fn sign_in_of(&self, project_id: &str) -> AccountSignIn {
+        match self.account_of(project_id) {
+            None => AccountSignIn::Session,
+            Some(_) => self
+                .project_sign_in
+                .get(project_id)
+                .copied()
+                .unwrap_or_default(),
+        }
     }
 
     pub fn add_secret(&mut self, scope: &str, name: &str) {
@@ -477,6 +537,26 @@ impl AgentSettings {
         if let Some(names) = self.secrets.get_mut(scope) {
             names.retain(|n| n != name);
         }
+    }
+
+    /// `(scope, name)` of the secrets kept per isolation that aren't sign-in tokens, the
+    /// default isolation's first, so its value wins where several have one.
+    pub fn secrets_to_globalize(&self, default_scope: &str) -> Vec<(String, String)> {
+        let mut scopes: Vec<&String> = self
+            .secrets
+            .keys()
+            .filter(|s| !crate::secrets::is_managed_scope(s))
+            .collect();
+        scopes.sort_by_key(|s| *s != default_scope);
+        scopes
+            .into_iter()
+            .flat_map(|scope| {
+                self.secret_names(scope)
+                    .iter()
+                    .filter(|n| !crate::agents::is_sign_in_secret(n))
+                    .map(move |n| (scope.clone(), n.clone()))
+            })
+            .collect()
     }
 
     /// Fills in install commands for known agents saved before installs existed, and replaces
@@ -583,6 +663,26 @@ mod tests {
             .contains("claude.ai/install.sh"));
         assert_eq!(s.profiles[1].install, None);
         assert_eq!(s.profiles[0].executable(), Some("claude"));
+    }
+
+    #[test]
+    fn isolation_secrets_go_global_but_sign_in_tokens_stay() {
+        let settings: AgentSettings = serde_json::from_str(
+            r#"{"profiles":[],"defaultProfile":null,"secrets":{
+                "docker":["GH_TOKEN","CLAUDE_CODE_OAUTH_TOKEN"],
+                "dockerSandbox":["GH_TOKEN","NPM_TOKEN"],
+                "global":["A"],
+                "project:p1":["B"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.secrets_to_globalize("dockerSandbox"),
+            [
+                ("dockerSandbox".into(), "GH_TOKEN".into()),
+                ("dockerSandbox".into(), "NPM_TOKEN".into()),
+                ("docker".into(), "GH_TOKEN".into()),
+            ] as [(String, String); 3]
+        );
     }
 
     #[test]

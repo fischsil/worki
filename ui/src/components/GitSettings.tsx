@@ -1,36 +1,19 @@
+import { ChevronRight } from "lucide-react";
+
 import { DEFAULT_WRITER_COMMAND } from "../lib/api";
 import { ASK_PROMPTS, type AskPrompt } from "../lib/askPrompts";
 import { useUi } from "../lib/store";
-import { Group } from "./GeneralSettings";
-import { Checkbox, Field, Input, Textarea } from "./ui";
+import { Field, Group, Input, Textarea } from "./ui";
 
 export function GitSettings() {
   const writerCommand = useUi((s) => s.writerCommand);
   const setWriterCommand = useUi((s) => s.setWriterCommand);
-  const showCommits = useUi((s) => s.showCommits);
-  const setShowCommits = useUi((s) => s.setShowCommits);
-  const showPullRequests = useUi((s) => s.showPullRequests);
-  const setShowPullRequests = useUi((s) => s.setShowPullRequests);
+  const customized = useUi((s) => Object.values(s.askPrompts).filter((p) => p != null).length);
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">Git</h2>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
-        <Group title="Features">
-          <Checkbox checked={showCommits} onChange={setShowCommits}>
-            <span className="text-[13px]">Commits</span>
-            <span className="block text-xs text-faint">
-              Commit box, the list of commits and rebasing in the changes panel.
-            </span>
-          </Checkbox>
-          <Checkbox checked={showPullRequests} onChange={setShowPullRequests}>
-            <span className="text-[13px]">Pull requests</span>
-            <span className="block text-xs text-faint">
-              Creating pull requests and showing their status and checks. Uses the GitHub CLI (gh).
-            </span>
-          </Checkbox>
-        </Group>
-
         <Group title="Agent tasks">
           <Field
             label="Command for writing"
@@ -48,9 +31,17 @@ export function GitSettings() {
               </button>
             )}
           </Field>
-          {(Object.keys(ASK_PROMPTS) as AskPrompt[]).map((kind) => (
-            <PromptField key={kind} kind={kind} />
-          ))}
+          <details className="group">
+            <summary className="flex cursor-default items-center gap-1 text-xs font-medium text-muted select-none hover:text-fg">
+              <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+              Prompts{customized > 0 && <span className="font-normal text-faint"> · {customized} changed</span>}
+            </summary>
+            <div className="mt-3 flex flex-col gap-4">
+              {(Object.keys(ASK_PROMPTS) as AskPrompt[]).map((kind) => (
+                <PromptField key={kind} kind={kind} />
+              ))}
+            </div>
+          </details>
         </Group>
       </div>
     </section>

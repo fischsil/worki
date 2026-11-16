@@ -1,13 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, RefreshCw } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 
 import { api, errorMessage } from "../lib/api";
 import { keys, useIsolationSettings } from "../lib/queries";
 import { useKeepAwake } from "../lib/awake";
 import { useUi } from "../lib/store";
 import { checkForUpdates, useUpdates } from "../lib/updates";
-import { Button, Checkbox, ErrorText } from "./ui";
+import { Button, Checkbox, ErrorText, Group } from "./ui";
 
 export function GeneralSettings() {
   const qc = useQueryClient();
@@ -36,33 +36,33 @@ export function GeneralSettings() {
       <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">General</h2>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
         <Group title="Power">
-          <Checkbox checked={keepAwake} onChange={setKeepAwake}>
+          <Checkbox
+            checked={keepAwake}
+            onChange={setKeepAwake}
+            hint="While an agent session is open. The display can still turn off; closing the lid still sleeps. The cup icon at the bottom of the sidebar switches it too."
+          >
             <span className="text-[13px]">Keep the Mac awake while agents run</span>
-            <span className="block text-xs text-faint">
-              While an agent session is open. The display can still turn off; closing the lid still sleeps. The cup
-              next to Settings toggles it too.
-            </span>
           </Checkbox>
         </Group>
 
         <Group title="Updates">
-          <Checkbox checked={autoUpdate} onChange={setAutoUpdate}>
+          <Checkbox
+            checked={autoUpdate}
+            onChange={setAutoUpdate}
+            hint="Looks for a new worki release on GitHub when worki starts and every few hours. A new release shows an Update button at the bottom of the sidebar."
+          >
             <span className="text-[13px]">Check for updates automatically</span>
-            <span className="block text-xs text-faint">
-              Looks for a new worki release on GitHub when worki starts and every few hours. A new release shows an
-              Update button next to Settings.
-            </span>
           </Checkbox>
           <div className="flex items-center gap-3">
             <Button onClick={() => checkForUpdates()} disabled={updates.status !== "idle"}>
               {updates.status === "checking" ? <LoaderCircle size={12} className="animate-spin" /> : <RefreshCw size={12} />}
               Check now
             </Button>
-            <span className="text-xs text-faint">
+            <span className="text-[13px] text-faint">
               {updates.error
                 ? <span className="text-removed">Couldn't check: {updates.error}</span>
                 : updates.available
-                  ? `worki ${updates.available.version} is available. Use Update next to Settings.`
+                  ? `worki ${updates.available.version} is available. Use Update at the bottom of the sidebar.`
                   : updates.checkedAt
                     ? "worki is up to date."
                     : null}
@@ -71,31 +71,23 @@ export function GeneralSettings() {
         </Group>
 
         <Group title="Startup and quit">
-          <Checkbox checked={reopen} onChange={setReopen}>
+          <Checkbox
+            checked={reopen}
+            onChange={setReopen}
+            hint="Claude sessions that were open when worki quit start again and continue their conversations."
+          >
             <span className="text-[13px]">Reopen Claude sessions on start</span>
-            <span className="block text-xs text-faint">
-              Claude sessions that were open when worki quit start again and continue their conversations.
-            </span>
           </Checkbox>
-          <Checkbox checked={isolation?.stopOnQuit ?? false} onChange={setStopOnQuit}>
+          <Checkbox
+            checked={isolation?.stopOnQuit ?? false}
+            onChange={setStopOnQuit}
+            hint="Off: Docker, Podman and sandbox environments keep running, so sessions start faster next time. On: they're stopped to free memory and started again when a session needs them."
+          >
             <span className="text-[13px]">Stop containers when worki quits</span>
-            <span className="block text-xs text-faint">
-              Off: Docker, Podman and sandbox environments keep running, so sessions start faster next time. On: they're
-              stopped to free memory and started again when a session needs them.
-            </span>
           </Checkbox>
           <ErrorText>{error}</ErrorText>
         </Group>
       </div>
     </section>
-  );
-}
-
-export function Group({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-3">
-      <h3 className="text-[11px] font-semibold tracking-wide text-faint uppercase">{title}</h3>
-      {children}
-    </div>
   );
 }

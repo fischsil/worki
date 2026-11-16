@@ -1,20 +1,14 @@
 import clsx from "clsx";
-import { Coffee, Monitor, Moon, PartyPopper, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { FONT_SIZES, type Theme, useUi } from "../lib/store";
-import { Group } from "./GeneralSettings";
-import { Field, Select } from "./ui";
+import { Group, Select } from "./ui";
 
 const themes: Choice<Theme>[] = [
   { value: "system", label: "System", icon: <Monitor size={13} /> },
   { value: "light", label: "Light", icon: <Sun size={13} /> },
   { value: "dark", label: "Dark", icon: <Moon size={13} /> },
-];
-
-const personalities: Choice<boolean>[] = [
-  { value: false, label: "Calm", icon: <Coffee size={13} /> },
-  { value: true, label: "Playful", icon: <PartyPopper size={13} /> },
 ];
 
 export function AppearanceSettings() {
@@ -27,19 +21,14 @@ export function AppearanceSettings() {
           <Segmented choices={themes} value={ui.theme} onChange={ui.setTheme} />
         </Group>
 
-        <Group title="Personality">
-          <Segmented choices={personalities} value={ui.playful} onChange={ui.setPlayful} />
-          <p className="text-xs text-muted">
-            Playful gives each agent a name and a colour and adds a few friendly touches to empty views.
-          </p>
-        </Group>
-
         <Group title="Font sizes">
-          <FontSizeField label="Sidebar" value={ui.sidebarFontSize} onChange={ui.setSidebarFontSize} />
-          <FontSizeField label="Terminal" value={ui.terminalFontSize} onChange={ui.setTerminalFontSize} />
-          <FontSizeField label="Chat" value={ui.chatFontSize} onChange={ui.setChatFontSize} />
-          <FontSizeField label="Changes panel" value={ui.panelFontSize} onChange={ui.setPanelFontSize} />
-          <FontSizeField label="Diff" value={ui.diffFontSize} onChange={ui.setDiffFontSize} />
+          <div className="grid w-72 grid-cols-[1fr_auto] items-center gap-x-4 gap-y-2">
+            <FontSizeField label="Sidebar" value={ui.sidebarFontSize} onChange={ui.setSidebarFontSize} />
+            <FontSizeField label="Terminal" value={ui.terminalFontSize} onChange={ui.setTerminalFontSize} />
+            <FontSizeField label="Chat" value={ui.chatFontSize} onChange={ui.setChatFontSize} />
+            <FontSizeField label="Changes panel" value={ui.panelFontSize} onChange={ui.setPanelFontSize} />
+            <FontSizeField label="Diff" value={ui.diffFontSize} onChange={ui.setDiffFontSize} />
+          </div>
         </Group>
       </div>
     </section>
@@ -48,15 +37,16 @@ export function AppearanceSettings() {
 
 function FontSizeField({ label, value, onChange }: { label: string; value: number; onChange: (size: number) => void }) {
   return (
-    <Field label={label}>
-      <Select value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-8 w-24 text-[13px]">
+    <label className="contents">
+      <span className="text-[13px]">{label}</span>
+      <Select value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-7 w-24 text-[13px]">
         {FONT_SIZES.map((size) => (
           <option key={size} value={size}>
             {size} pt
           </option>
         ))}
       </Select>
-    </Field>
+    </label>
   );
 }
 

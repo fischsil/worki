@@ -13,10 +13,8 @@ import {
 } from "../lib/api";
 import { keys } from "../lib/queries";
 import { useUi } from "../lib/store";
-import { ClaudeAccounts } from "./ClaudeAccounts";
 import { ClaudeSettingsDialog } from "./ClaudeSettingsDialog";
-import { Group } from "./GeneralSettings";
-import { Button, Checkbox, DefaultMark, Dialog, ErrorText, Field, IconButton, Input, NestedDialog } from "./ui";
+import { Button, Checkbox, DefaultMark, Dialog, ErrorText, Field, Group, IconButton, Input, NestedDialog } from "./ui";
 
 const BUILT_IN = ["claude", "codex"];
 
@@ -61,18 +59,19 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
           <AgentBox title="Claude Code" isDefault={claude.id === defaultId} aside={defaultMark(claude)}>
             <CommandField agent={claude} placeholder="claude --model opus" onChange={setCommand(claude)} />
             <Yolo agent={claude} onChange={setCommand(claude)} />
-            <Checkbox checked={settings.remoteControl} onChange={setRemoteControl}>
+            <Checkbox
+              checked={settings.remoteControl}
+              onChange={setRemoteControl}
+              hint="Starts all Claude Code sessions with it, except those signing in with a token, which can't use it. For one chat only, turn it on below its message box."
+            >
               <span className="text-[13px]">Remote Control for every session</span>
-              <span className="block text-xs leading-relaxed text-faint">
-                Starts all Claude Code sessions with it. For one chat only, turn it on below its message box.
-              </span>
             </Checkbox>
             <div className="flex flex-col gap-1.5">
               <Button className="self-start" onClick={() => setEditingClaude(true)}>
                 <SlidersHorizontal size={12} />
                 Settings for isolated sessions…
               </Button>
-              <span className="text-xs leading-relaxed text-faint">
+              <span className="text-[13px] leading-relaxed text-faint">
                 For User Isolation, Docker Sandboxes, Docker and Podman.
               </span>
             </div>
@@ -84,10 +83,6 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
             <Yolo agent={codex} onChange={setCommand(codex)} />
           </AgentBox>
         )}
-      </Group>
-
-      <Group title="Claude Code accounts">
-        <ClaudeAccounts accounts={settings.accounts} defaultId={settings.defaultAccount} />
       </Group>
 
       <Group title="Other agents">
@@ -111,7 +106,7 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
             ))}
           </div>
         ) : (
-          <p className="-mt-1 text-xs leading-relaxed text-faint">
+          <p className="-mt-1 text-[13px] leading-relaxed text-faint">
             Any command-line agent, such as Aider or Gemini CLI.
           </p>
         )}
@@ -260,11 +255,13 @@ function Yolo({ agent, onChange }: { agent: AgentProfile; onChange: (command: st
     <Checkbox
       checked={agent.command.split(/\s+/).includes(flag)}
       onChange={(on) => onChange(withSkipPermissions(agent.command, on))}
+      hint={
+        <>
+          Adds <span className="font-mono">{flag}</span>: no permission prompts. Best with isolation.
+        </>
+      }
     >
       <span className="text-[13px]">YOLO mode</span>
-      <span className="block text-xs text-faint">
-        Adds <span className="font-mono">{flag}</span>: no permission prompts. Best with isolation.
-      </span>
     </Checkbox>
   );
 }

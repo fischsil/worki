@@ -6,7 +6,7 @@ import { useState } from "react";
 import { api, errorMessage, type OpenerSettings } from "../lib/api";
 import { keys, useOpenerSettings } from "../lib/queries";
 import { AppIcon } from "./OpenInMenu";
-import { Button, ErrorText, IconButton } from "./ui";
+import { Button, ErrorText, IconButton, PageTitle } from "./ui";
 
 /** Apps worktrees can be opened in. Changes are saved immediately. */
 export function OpenInSettings() {
@@ -45,12 +45,11 @@ export function OpenInSettings() {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">Open in</h2>
+      <PageTitle
+        title="Open in"
+        info="Apps listed in the worktree header to open the worktree with. The default app is the main button. Apps run as you, not as the agent user."
+      />
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 pb-6">
-        <p className="text-xs leading-relaxed text-faint">
-          Apps listed in the worktree header to open the worktree with. The default app is the main button. Apps run as
-          you, not as the agent user. Saved right away.
-        </p>
         <div className="flex flex-col gap-1">
           <div className="grid grid-cols-[52px_1fr_24px] gap-2 px-1 text-[11px] font-medium text-faint">
             <span>Default</span>
@@ -82,7 +81,7 @@ export function OpenInSettings() {
               </IconButton>
             </div>
           ))}
-          {settings.apps.length === 0 && <p className="px-1 py-2 text-xs text-faint">No apps yet.</p>}
+          {settings.apps.length === 0 && <p className="px-1 py-2 text-[13px] text-faint">No apps yet.</p>}
         </div>
         <Button className="self-start" onClick={addApp}>
           <Plus size={13} />

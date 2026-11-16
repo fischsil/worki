@@ -190,12 +190,12 @@ export function RemoteFields({
           <ErrorText>{error}</ErrorText>
         </>
       )}
-      <Checkbox checked={value.keepAlive} onChange={(keepAlive) => set({ keepAlive })}>
+      <Checkbox
+        checked={value.keepAlive}
+        onChange={(keepAlive) => set({ keepAlive })}
+        hint="Sessions run in tmux on the host and keep working when worki quits or the connection drops. worki installs tmux if it's missing."
+      >
         <span className="text-[13px]">Keep the remote session alive</span>
-        <span className="block text-xs text-faint">
-          Sessions run in tmux on the host and keep working when worki quits or the connection drops. worki installs
-          tmux if it's missing.
-        </span>
       </Checkbox>
     </>
   );

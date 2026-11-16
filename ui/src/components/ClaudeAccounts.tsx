@@ -4,9 +4,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, LoaderCircle, Plus, RefreshCw, Trash2, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { api, type ClaudeAccount, errorMessage } from "../lib/api";
-import { keys } from "../lib/queries";
-import { Button, DefaultMark, ErrorText, Field, IconButton, Input, NestedDialog } from "./ui";
+import { api, type ClaudeAccount, errorMessage, loginSharers, type LoginEvent } from "../lib/api";
+import { keys, useAgentSettings, useProjects } from "../lib/queries";
+import { Button, DefaultMark, ErrorText, Field, IconButton, Input, NestedDialog, SharedBadge } from "./ui";
 
 /** Claude Code logins of worki's own: projects use the default one unless they pick another. */
 export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccount[]; defaultId: string | null }) {
@@ -15,6 +15,9 @@ export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccoun
   const [checking, setChecking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: keys.agentSettings });
+  const { data: settings } = useAgentSettings();
+  const { data: projects = [] } = useProjects();
+  const sharers = (accountId: string) => (settings ? loginSharers(settings, projects, accountId) : []);
 
   async function act(work: () => Promise<unknown>) {
     setError(null);
@@ -44,38 +47,46 @@ export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccoun
     <>
       {accounts.length > 0 ? (
         <div className="flex flex-col divide-y divide-line rounded-lg border border-line">
-          {accounts.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 px-3 py-2">
-              <UserRound size={14} className={a.email ? "shrink-0 text-added" : "shrink-0 text-faint"} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px]">{a.email ?? "Not signed in"}</div>
-                {(a.plan || a.organization) && (
-                  <div className="truncate text-[11px] text-faint">
-                    {[a.plan, a.organization].filter(Boolean).join(" · ")}
-                  </div>
+          {accounts.map((a) => {
+            const sharing = sharers(a.id);
+            return (
+              <div key={a.id} className="flex items-center gap-3 px-3 py-2">
+                <UserRound size={14} className={a.email ? "shrink-0 text-added" : "shrink-0 text-faint"} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px]">{a.email ?? "Not signed in"}</div>
+                  {(a.plan || a.organization) && (
+                    <div className="truncate text-[11px] text-faint">
+                      {[a.plan, a.organization].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                  {sharing.length > 1 && (
+                    <div className="mt-0.5" title={sharing.map((p) => p.name).join(", ")}>
+                      <SharedBadge>Login folder shared by {sharing.length} projects</SharedBadge>
+                    </div>
+                  )}
+                </div>
+                <DefaultMark
+                  isDefault={a.id === defaultId}
+                  onMakeDefault={() => act(() => api.setDefaultAccount(a.id))}
+                  label="Default"
+                />
+                <Button onClick={() => setSigningIn({ account: a, isNew: false })} className="shrink-0 whitespace-nowrap">
+                  {a.email ? "Sign in again" : "Sign in"}
+                </Button>
+                {a.email && (
+                  <IconButton label="Check who it signs in as" onClick={() => check(a)}>
+                    {checking === a.id ? <LoaderCircle size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  </IconButton>
                 )}
-              </div>
-              <DefaultMark
-                isDefault={a.id === defaultId}
-                onMakeDefault={() => act(() => api.setDefaultAccount(a.id))}
-                label="Default"
-              />
-              <Button onClick={() => setSigningIn({ account: a, isNew: false })} className="shrink-0 whitespace-nowrap">
-                {a.email ? "Sign in again" : "Sign in"}
-              </Button>
-              {a.email && (
-                <IconButton label="Check who it signs in as" onClick={() => check(a)}>
-                  {checking === a.id ? <LoaderCircle size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                <IconButton label="Remove account" onClick={() => remove(a)}>
+                  <Trash2 size={13} />
                 </IconButton>
-              )}
-              <IconButton label="Remove account" onClick={() => remove(a)}>
-                <Trash2 size={13} />
-              </IconButton>
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       ) : (
-        <p className="-mt-1 text-xs leading-relaxed text-faint">
+        <p className="-mt-1 text-[13px] leading-relaxed text-faint">
           Sign in once per account. Projects use the default one unless they pick another, in Docker Sandboxes, Docker
           and Podman.
         </p>
@@ -108,6 +119,29 @@ function SignInAccountDialog({
   account: ClaudeAccount;
   onClose: (signedIn: boolean) => void;
 }) {
+  return (
+    <ClaudeSignInDialog
+      title={account.email ? `Sign in again as ${account.email}` : "Sign in to Claude Code"}
+      flowId={account.id}
+      start={(onEvent) => api.logInClaudeAccount(account.id, onEvent)}
+      onClose={onClose}
+    />
+  );
+}
+
+/** A Claude Code sign-in in a throwaway container, as sign-in `flowId` in the backend: open the
+ * link it sends, then paste the code the page shows. */
+export function ClaudeSignInDialog({
+  title,
+  flowId,
+  start,
+  onClose,
+}: {
+  title: string;
+  flowId: string;
+  start: (onEvent: (event: LoginEvent) => void) => Promise<unknown>;
+  onClose: (signedIn: boolean) => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [lastLine, setLastLine] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -121,11 +155,10 @@ function SignInAccountDialog({
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    api
-      .logInClaudeAccount(account.id, (event) => {
-        if (event.kind === "url") setUrl(event.url);
-        else setLastLine(event.line);
-      })
+    start((event) => {
+      if (event.kind === "url") setUrl(event.url);
+      else setLastLine(event.line);
+    })
       .then(() => {
         done.current = true;
         onClose(true);
@@ -135,10 +168,10 @@ function SignInAccountDialog({
         setError(errorMessage(e));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account.id]);
+  }, [flowId]);
 
   const close = () => {
-    if (!done.current) api.cancelLogin(account.id);
+    if (!done.current) api.cancelLogin(flowId);
     onClose(false);
   };
 
@@ -146,7 +179,7 @@ function SignInAccountDialog({
     if (!code.trim()) return;
     setError(null);
     try {
-      await api.enterLoginCode(account.id, code);
+      await api.enterLoginCode(flowId, code);
       setSent(true);
     } catch (e) {
       setError(errorMessage(e));
@@ -155,7 +188,7 @@ function SignInAccountDialog({
 
   return (
     <NestedDialog
-      title={account.email ? `Sign in again as ${account.email}` : "Sign in to Claude Code"}
+      title={title}
       onClose={close}
       width={460}
       footer={

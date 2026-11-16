@@ -2,7 +2,7 @@
 //! environment. Run with: `cargo test -p worki-isolation --test containers -- --ignored`
 //! (or name one: `… -- --ignored podman`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use worki_isolation::{Container, Isolation, LaunchRequest, Workspace};
@@ -89,7 +89,9 @@ fn lifecycle(isolation: Isolation) {
         repo: repo.clone(),
         worktree_root: root.clone(),
         worktree: Some(wt.clone()),
-        account_dir: None,
+        claude_dir: None,
+        claude_login_dir: None,
+        shared_folder: None,
         replace_outdated: false,
     };
     backend.grant_access(&ws).expect("environment created");
@@ -223,7 +225,9 @@ fn main_checkout(isolation: Isolation) {
         repo: repo.clone(),
         worktree_root: tmp.path().to_path_buf(),
         worktree: Some(repo.clone()),
-        account_dir: None,
+        claude_dir: None,
+        claude_login_dir: None,
+        shared_folder: None,
         replace_outdated: false,
     };
     backend.grant_access(&ws).expect("environment created");
@@ -354,7 +358,9 @@ fn account_switch(isolation: Isolation) {
         repo: repo.clone(),
         worktree_root: root.clone(),
         worktree: Some(repo.clone()),
-        account_dir: Some(account.to_path_buf()),
+        claude_dir: Some(account.to_path_buf()),
+        claude_login_dir: None,
+        shared_folder: None,
         replace_outdated,
     };
     let config_dir = || {
@@ -396,4 +402,254 @@ fn docker_account_switch() {
 #[ignore = "needs Docker Sandboxes (sbx)"]
 fn sbx_account_switch() {
     account_switch(Isolation::DockerSandbox { template: None });
+}
+
+/// Two projects on one account: each has its own Claude Code config folder, writable, and sees
+/// nothing of the other's or of the account's other files; only the login is shared. The project
+/// folder is shared between worktrees until it's turned off.
+fn claude_files_and_project_folder(isolation: Isolation) {
+    let home = std::env::var("HOME").unwrap();
+    let base = Path::new(&home).join("worki");
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix(".e2e-")
+        .tempdir_in(&base)
+        .unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("README.md"), "hello\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let (wt_a, wt_b) = (root.join("wt-a"), root.join("wt-b"));
+    for (wt, branch) in [(&wt_a, "a"), (&wt_b, "b")] {
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                wt.to_str().unwrap(),
+                "main",
+            ],
+        );
+    }
+
+    let account = root.join("account");
+    std::fs::create_dir_all(account.join("projects/-elsewhere")).unwrap();
+    std::fs::write(account.join("settings.json"), r#"{"from":"account"}"#).unwrap();
+    std::fs::write(account.join(".credentials.json"), "login").unwrap();
+    let login = worki_isolation::account_login_dir(&account).unwrap();
+    assert!(
+        !account.join(".credentials.json").exists(),
+        "the login moves to its folder"
+    );
+    let own = |name: &str| {
+        let dir = root.join(format!("project {name}"));
+        std::fs::create_dir_all(dir.join("skills")).unwrap();
+        std::fs::write(dir.join("settings.json"), format!(r#"{{"from":"{name}"}}"#)).unwrap();
+        dir
+    };
+    let (own_a, own_b) = (own("a"), own("b"));
+    let shared = root.join("shared");
+
+    let backend = isolation.backend();
+    backend.ready().expect("engine available and running");
+    let ws = |wt: &Path, dir: &Path, shared_folder: bool, replace_outdated| Workspace {
+        repo: repo.clone(),
+        worktree_root: root.clone(),
+        worktree: Some(wt.to_path_buf()),
+        claude_dir: Some(dir.to_path_buf()),
+        claude_login_dir: Some(login.clone()),
+        shared_folder: shared_folder.then(|| shared.clone()),
+        replace_outdated,
+    };
+    let in_env = |wt: &Path, command: &str| {
+        run(backend
+            .launch(&LaunchRequest {
+                cwd: wt.to_path_buf(),
+                command: Some(command.into()),
+                interactive: false,
+                stdin: false,
+                env: vec![],
+                session: None,
+            })
+            .unwrap())
+    };
+    let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
+
+    backend
+        .grant_access(&ws(&wt_a, &own_a, true, false))
+        .expect("environment a");
+    backend
+        .grant_access(&ws(&wt_b, &own_b, true, false))
+        .expect("environment b");
+
+    for (wt, dir, other) in [(&wt_a, &own_a, &own_b), (&wt_b, &own_b, &own_a)] {
+        let (ok, out) = in_env(
+            wt,
+            &format!(
+                r#"test "$CLAUDE_CONFIG_DIR" = '{}' && test "$CLAUDE_SECURESTORAGE_CONFIG_DIR" = '{}' && ! test -e '{}' && ! test -e '{}' && ! test -e '{}'"#,
+                dir.display(),
+                login.display(),
+                account.join("settings.json").display(),
+                account.join("projects").display(),
+                other.display(),
+            ),
+        );
+        assert!(
+            ok,
+            "{}: only its own config folder and the login: {out}",
+            dir.display()
+        );
+    }
+
+    let (ok, out) = in_env(
+        &wt_a,
+        r#"echo '{"from":"session"}' > "$CLAUDE_CONFIG_DIR/settings.json" && echo memory > "$CLAUDE_CONFIG_DIR/CLAUDE.md" && mkdir -p "$CLAUDE_CONFIG_DIR/skills/new""#,
+    );
+    assert!(ok, "the config folder must be writable: {out}");
+    assert_eq!(
+        read(own_a.join("settings.json")),
+        "{\"from\":\"session\"}\n"
+    );
+    assert_eq!(read(own_a.join("CLAUDE.md")), "memory\n");
+    assert_eq!(read(own_b.join("settings.json")), r#"{"from":"b"}"#);
+    assert_eq!(read(account.join("settings.json")), r#"{"from":"account"}"#);
+
+    let (ok, out) = in_env(
+        &wt_a,
+        r#"echo renewed > "$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json""#,
+    );
+    assert!(ok, "the login must stay writable: {out}");
+    assert_eq!(read(login.join(".credentials.json")), "renewed\n");
+    let (ok, out) = in_env(
+        &wt_b,
+        r#"cat "$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json""#,
+    );
+    assert!(
+        ok && out.contains("renewed"),
+        "the login must be shared: {out}"
+    );
+
+    let (ok, out) = in_env(
+        &wt_a,
+        r#"test "$WORKI_PROJECT_DIR" = /worki/project && echo from-a > "$WORKI_PROJECT_DIR/a""#,
+    );
+    assert!(ok, "project folder in a: {out}");
+    let (ok, out) = in_env(
+        &wt_b,
+        "cat /worki/project/a && echo from-b > /worki/project/b",
+    );
+    assert!(ok && out.contains("from-a"), "project folder in b: {out}");
+    assert_eq!(read(shared.join("a")), "from-a\n");
+    assert_eq!(read(shared.join("b")), "from-b\n");
+
+    backend
+        .grant_access(&ws(&wt_a, &own_a, false, true))
+        .expect("replaced without the project folder");
+    let (ok, out) = in_env(
+        &wt_a,
+        r#"test -z "$WORKI_PROJECT_DIR" && ! test -e /worki/project/a"#,
+    );
+    assert!(
+        ok,
+        "the project folder must be gone after turning it off: {out}"
+    );
+    assert_eq!(read(shared.join("b")), "from-b\n");
+
+    backend
+        .release(&ws(&wt_a, &own_a, false, false))
+        .expect("a removed");
+    backend
+        .release(&ws(&wt_b, &own_b, true, false))
+        .expect("b removed");
+    for wt in [&wt_a, &wt_b] {
+        git(
+            &repo,
+            &["worktree", "remove", "--force", wt.to_str().unwrap()],
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs Docker Desktop running"]
+fn docker_claude_files_and_project_folder() {
+    pull("docker");
+    claude_files_and_project_folder(Isolation::Docker {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Docker Sandboxes (sbx)"]
+fn sbx_claude_files_and_project_folder() {
+    claude_files_and_project_folder(Isolation::DockerSandbox { template: None });
+}
+
+#[test]
+#[ignore = "needs a running Podman machine"]
+fn podman_claude_files_and_project_folder() {
+    pull("podman");
+    claude_files_and_project_folder(Isolation::Podman {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+/// Signing an account in or checking it runs with a throwaway config folder: Claude Code's files
+/// go there, and only the login reaches the account's login folder.
+fn account_launch_keeps_the_account_to_its_login() {
+    let home = std::env::var("HOME").unwrap();
+    let base = Path::new(&home).join("worki");
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix(".e2e-")
+        .tempdir_in(&base)
+        .unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let (scratch, account) = (root.join("scratch"), root.join("account"));
+    let login = worki_isolation::account_login_dir(&account).unwrap();
+    let account_run = worki_isolation::account_launch(
+        &scratch,
+        Some(&login),
+        r#"echo config > "$CLAUDE_CONFIG_DIR/.claude.json" && echo login > "$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json""#,
+        false,
+    )
+    .expect("an engine with worki's image");
+    let (ok, out) = run(account_run.launch.clone());
+    assert!(ok, "{out}");
+    assert_eq!(
+        std::fs::read_to_string(scratch.join(".claude.json")).unwrap(),
+        "config\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(login.join(".credentials.json")).unwrap(),
+        "login\n"
+    );
+    let mut in_account: Vec<String> = std::fs::read_dir(&account)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    in_account.sort();
+    assert_eq!(in_account, ["login"]);
+}
+
+#[test]
+#[ignore = "needs Docker Desktop running and worki's image"]
+fn docker_account_launch_keeps_the_account_to_its_login() {
+    account_launch_keeps_the_account_to_its_login();
 }

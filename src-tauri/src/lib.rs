@@ -116,6 +116,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let projects = ProjectService::open_default()?;
+            if let Err(e) = projects.migrate_secrets() {
+                tracing::warn!("moving secrets: {e:#}");
+            }
+            if let Err(e) = projects.tidy_account_folders() {
+                tracing::warn!("tidying account folders: {e:#}");
+            }
             let awake = Arc::new(awake::KeepAwake::new(
                 projects.keep_awake().unwrap_or(false),
             ));
@@ -196,6 +202,7 @@ pub fn run() {
             isolation::isolation_build_image,
             isolation::worktree_isolation,
             isolation::set_worktree_isolation,
+            isolation::warm_worktree,
             accounts::add_claude_account,
             accounts::remove_claude_account,
             accounts::set_default_account,
@@ -204,6 +211,14 @@ pub fn run() {
             accounts::cancel_login,
             accounts::check_claude_account,
             accounts::set_project_account,
+            accounts::set_project_sign_in,
+            accounts::project_claude_dir,
+            accounts::project_environment,
+            accounts::set_project_environment,
+            accounts::project_shared_dir,
+            accounts::account_token_set,
+            accounts::set_account_token,
+            accounts::obtain_account_token,
             agents::agent_statuses,
             agents::share_agent,
             agents::sign_in_agent,

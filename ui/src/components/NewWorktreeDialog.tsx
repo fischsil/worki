@@ -85,7 +85,7 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
           submit();
         }}
       >
-        <Field label="Start from" hint={fetchError && <span className="text-removed">Couldn't fetch: {fetchError}</span>}>
+        <Field label="Start from" note={fetchError && <span className="text-removed">Couldn't fetch: {fetchError}</span>}>
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">
               <BranchPicker
@@ -108,7 +108,7 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
         </Field>
         <Field
           label="Worktree name"
-          hint={
+          note={
             nameTaken ? (
               <span className="text-removed">A branch named “{branch}” already exists.</span>
             ) : branch ? (
@@ -134,15 +134,14 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
           />
         </Field>
         {!project.remote && (
-          <Field label="Isolation">
-            <IsolationPicker
-              value={isolation}
-              onChange={setIsolation}
-              allowInherit
-              inheritName="Project default"
-              inheritLabel={projectDefault ? isolationLabel(projectDefault) : undefined}
-            />
-          </Field>
+          <IsolationPicker
+            label="Isolation"
+            value={isolation}
+            onChange={setIsolation}
+            allowInherit
+            inheritName="Project default"
+            inheritLabel={projectDefault ? isolationLabel(projectDefault) : undefined}
+          />
         )}
         <Checkbox checked={runSetup && !!setupScript} onChange={setRunSetup} disabled={!setupScript}>
           <span className="flex flex-col gap-0.5">

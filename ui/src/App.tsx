@@ -10,7 +10,6 @@ import { QuittingOverlay } from "./components/QuittingOverlay";
 import { RemoveWorktreeDialog } from "./components/RemoveWorktreeDialog";
 import { SaveEnvironmentDialog } from "./components/SaveEnvironmentDialog";
 import { SettingsView } from "./components/SettingsView";
-import { TreeDoodle } from "./components/Playful";
 import { Sidebar } from "./components/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { Tooltips } from "./components/Tooltips";
@@ -20,7 +19,6 @@ import { useActivityEvents } from "./lib/activities";
 import { api, errorMessage, isolationLabel, type SessionInfo } from "./lib/api";
 import { notify, useAttention } from "./lib/attention";
 import { keys, useAddProject, useIsolationSettings, useProjects, useWorktrees } from "./lib/queries";
-import { usePlayful } from "./lib/playful";
 import { useUi } from "./lib/store";
 import { useApplyTheme } from "./lib/theme";
 import { useAutoUpdates } from "./lib/updates";
@@ -60,6 +58,12 @@ export function App() {
       run: () => openDialog({ kind: "saveEnvironment", projectId, path: worktreePath }),
     }),
   );
+
+  const projectId = project?.id;
+  const worktreePath = worktree?.path;
+  useEffect(() => {
+    if (projectId && worktreePath) api.warmWorktree(projectId, worktreePath).catch(() => {});
+  }, [projectId, worktreePath]);
 
   useEffect(() => {
     const refresh = (n: number) => {
@@ -212,17 +216,9 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 }
 
 function EmptyProject({ onCreate }: { onCreate: () => void }) {
-  const playful = usePlayful();
   return (
     <Centered>
-      {playful ? (
-        <>
-          <TreeDoodle />
-          <h2 className="text-[15px] font-semibold">Plant your first branch</h2>
-        </>
-      ) : (
-        <GitBranchPlus size={28} className="text-muted" />
-      )}
+      <GitBranchPlus size={28} className="text-muted" />
       <p className="max-w-xs text-center text-xs leading-relaxed text-muted">
         Each worktree is a separate checkout on its own branch, where agents can work without getting in each
         other's way.

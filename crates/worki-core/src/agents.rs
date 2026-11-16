@@ -58,6 +58,19 @@ pub fn kit(executable: &str) -> Option<&'static Kit> {
     KITS.iter().find(|k| k.executable == executable)
 }
 
+/// The variable Claude Code signs in with a token from.
+pub fn claude_sign_in_secret() -> Option<&'static str> {
+    kit("claude").and_then(|k| k.sign_in).map(|s| s.secret)
+}
+
+/// Whether `name` is the variable an agent signs in with, which belongs to the isolation it was
+/// signed in for, not to the secrets you manage.
+pub fn is_sign_in_secret(name: &str) -> bool {
+    KITS.iter()
+        .filter_map(|k| k.sign_in.as_ref())
+        .any(|s| s.secret == name)
+}
+
 fn home() -> Result<PathBuf> {
     dirs::home_dir().context("no home directory")
 }
@@ -147,9 +160,240 @@ pub fn trust_worktree(backend: &dyn Backend, executable: &str, worktree: &Path) 
     }
 }
 
-/// Answers Claude Code's trust question for `worktree` in an account's folder, whose
+/// What a project's or worktree's Claude Code folder takes over from the one it starts from.
+const STARTING_FILES: [&str; 7] = [
+    "settings.json",
+    "CLAUDE.md",
+    "skills",
+    "agents",
+    "commands",
+    "output-styles",
+    "plugins",
+];
+/// Marks a Claude Code folder as started, so what's deleted from it later stays deleted.
+const STARTED: &str = ".worki-started";
+
+/// Starts `own` as a Claude Code config folder, from `from` when given (the account's, or the
+/// project's for a worktree). Once; later calls leave `own` alone.
+pub fn start_claude_dir(own: &Path, from: Option<&Path>, paths: &[&Path]) -> Result<()> {
+    if own.join(STARTED).exists() {
+        return Ok(());
+    }
+    match from {
+        Some(from) => take_claude_files(own, from, paths)?,
+        None => std::fs::create_dir_all(own)?,
+    }
+    std::fs::write(own.join(STARTED), "")?;
+    Ok(())
+}
+
+/// Copies what `own` doesn't have yet from `from`: its settings, `CLAUDE.md`, skills, agents,
+/// commands, output styles and plugins, and the history and memory Claude Code keeps for
+/// `paths` and the folders under them.
+fn take_claude_files(own: &Path, from: &Path, paths: &[&Path]) -> Result<()> {
+    std::fs::create_dir_all(own)?;
+    for name in STARTING_FILES {
+        let (target, source) = (own.join(name), from.join(name));
+        if target.symlink_metadata().is_err() && source.exists() {
+            copy_all(&source, &target)?;
+        }
+    }
+    let keys: Vec<String> = paths.iter().map(|p| claude_project_key(p)).collect();
+    let mine = |name: &str| {
+        keys.iter()
+            .any(|k| name == k || name.starts_with(&format!("{k}-")))
+    };
+    if let Ok(entries) = std::fs::read_dir(from.join("projects")) {
+        std::fs::create_dir_all(own.join("projects"))?;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let target = own.join("projects").join(&name);
+            if mine(&name.to_string_lossy()) && !target.exists() {
+                copy_all(&entry.path(), &target)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Marks an account folder that holds nothing but its login.
+const TIDIED: &str = ".worki-tidied";
+
+/// Account folders used to be every project's config folder. Gives each project in `projects`
+/// (its folder and the paths it keeps history for) what it doesn't have yet from the account's,
+/// then empties that down to the login. Once per account.
+pub fn tidy_account_dir(account: &Path, projects: &[(PathBuf, Vec<&Path>)]) -> Result<()> {
+    if account.join(TIDIED).exists() || !account.exists() {
+        return Ok(());
+    }
+    account_login_dir(account)?;
+    for (own, paths) in projects {
+        take_claude_files(own, account, paths)?;
+        if !own.join(STARTED).exists() {
+            std::fs::write(own.join(STARTED), "")?;
+        }
+    }
+    for entry in std::fs::read_dir(account)?.flatten() {
+        if entry.file_name() == "login" {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    std::fs::write(account.join(TIDIED), "")?;
+    Ok(())
+}
+
+/// Who a Claude Code config folder's login is, from its `.claude.json`.
+fn identity_in(config: &Path) -> Option<serde_json::Map<String, Value>> {
+    let value = read_claude_json(config);
+    let identity: serde_json::Map<_, _> = ["oauthAccount", "userID"]
+        .into_iter()
+        .filter(|k| !value[k].is_null())
+        .map(|k| (k.to_owned(), value[k].clone()))
+        .collect();
+    (!identity.is_empty()).then_some(identity)
+}
+
+pub type Identity = serde_json::Map<String, Value>;
+
+/// Who a login is, kept beside it in its folder so the two always change together.
+const IDENTITY: &str = "identity.json";
+
+/// The account's login folder (see [`worki_isolation::account_login_dir`]), with who the login
+/// is moved in from where an earlier version kept it, the account's `.claude.json`.
+pub fn account_login_dir(account: &Path) -> Result<PathBuf> {
+    let login = worki_isolation::account_login_dir(account)?;
+    if let Some(identity) = identity_in(account) {
+        if !login.join(IDENTITY).exists() {
+            store_identity(&login, &identity)?;
+        }
+        std::fs::remove_file(account.join(".claude.json"))?;
+    }
+    Ok(login)
+}
+
+fn stored_identity(login: &Path) -> Option<Identity> {
+    let text = std::fs::read_to_string(login.join(IDENTITY)).ok()?;
+    serde_json::from_str::<Value>(&text)
+        .ok()?
+        .as_object()
+        .filter(|m| !m.is_empty())
+        .cloned()
+}
+
+fn store_identity(login: &Path, identity: &Identity) -> Result<()> {
+    std::fs::create_dir_all(login)?;
+    let text = serde_json::to_string_pretty(&Value::Object(identity.clone()))?;
+    std::fs::write(login.join(IDENTITY), text)?;
+    Ok(())
+}
+
+/// Keeps who `config` (the throwaway folder a sign-in through worki ran with) signed in as next
+/// to the login it wrote.
+pub fn keep_login_identity(login: &Path, config: &Path) -> Result<()> {
+    match identity_in(config) {
+        Some(identity) => store_identity(login, &identity),
+        None => Ok(()),
+    }
+}
+
+/// Puts who the login is into the config folder `own`, where Claude Code looks for it.
+pub fn copy_login_identity(login: &Path, own: &Path) -> Result<()> {
+    let Some(identity) = stored_identity(login) else {
+        return Ok(());
+    };
+    let mut config = read_claude_json(own);
+    if identity.iter().all(|(k, v)| config[k] == *v) {
+        return Ok(());
+    }
+    for (k, v) in identity {
+        config[k] = v;
+    }
+    write_claude_json(own, &config)
+}
+
+/// Keeps the login and who it is in step when a session signed in again itself: Claude Code
+/// wrote the new login to `login` and who it is to its own config folder, one of `configs` (the
+/// config folders sessions on this login use). Takes the newest identity there that differs from
+/// the login's as the login's, and gives it to all of `configs`. Returns it when it changed.
+pub fn sync_login_identity(login: &Path, configs: &[PathBuf]) -> Result<Option<Identity>> {
+    let stored = stored_identity(login);
+    let modified = |dir: &PathBuf| {
+        std::fs::metadata(dir.join(".claude.json"))
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    let newer = configs
+        .iter()
+        .filter_map(|dir| Some((modified(dir)?, identity_in(dir)?)))
+        .filter(|(_, identity)| Some(identity) != stored.as_ref())
+        .max_by_key(|(when, _)| *when);
+    let Some((_, identity)) = newer else {
+        return Ok(None);
+    };
+    store_identity(login, &identity)?;
+    give_login_identity(login, configs)?;
+    Ok(Some(identity))
+}
+
+/// Puts who the login is into each of `configs` that exists.
+pub fn give_login_identity(login: &Path, configs: &[PathBuf]) -> Result<()> {
+    for dir in configs.iter().filter(|d| d.exists()) {
+        copy_login_identity(login, dir)?;
+    }
+    Ok(())
+}
+
+/// The folder name Claude Code keeps a path's history and memory under, in `projects/`.
+fn claude_project_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// A config folder's `.claude.json`, or an empty object.
+fn read_claude_json(dir: &Path) -> Value {
+    std::fs::read_to_string(dir.join(".claude.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| Value::Object(Default::default()))
+}
+
+fn write_claude_json(dir: &Path, config: &Value) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(
+        dir.join(".claude.json"),
+        serde_json::to_string_pretty(config)?,
+    )?;
+    Ok(())
+}
+
+fn copy_all(from: &Path, to: &Path) -> std::io::Result<()> {
+    let meta = from.symlink_metadata()?;
+    if meta.file_type().is_symlink() {
+        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)
+    } else if meta.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_all(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(drop)
+    }
+}
+
+/// Answers Claude Code's trust question for `worktree` in the config folder `dir`, whose
 /// `.claude.json` Claude Code reads instead of `~/.claude.json` there.
-pub fn trust_in_account(dir: &Path, worktree: &Path) -> Result<()> {
+pub fn trust_in_config_dir(dir: &Path, worktree: &Path) -> Result<()> {
     let Some(trust) = kit("claude").and_then(|k| k.trust.as_ref()) else {
         return Ok(());
     };
@@ -252,6 +496,204 @@ pub fn strip_ansi(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn starts_the_project_folder_from_the_account_once() {
+        let root = tempfile::tempdir().unwrap();
+        let (account, own) = (root.path().join("account"), root.path().join("own"));
+        let write = |p: PathBuf, text: &str| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        write(account.join("skills/review/SKILL.md"), "review");
+        write(account.join("settings.json"), r#"{"model":"opus"}"#);
+        write(account.join(".credentials.json"), "secret");
+        write(account.join("projects/-r-sam/memory/MEMORY.md"), "sam");
+        write(account.join("projects/-w-sam-feat/1.jsonl"), "feat");
+        write(
+            account.join("projects/-r-sam2/memory/MEMORY.md"),
+            "other repo",
+        );
+        write(account.join("projects/-r-other/1.jsonl"), "other");
+
+        start_claude_dir(
+            &own,
+            Some(&account),
+            &[Path::new("/r/sam"), Path::new("/w/sam")],
+        )
+        .unwrap();
+        let read = |p: &str| std::fs::read_to_string(own.join(p)).unwrap();
+        assert_eq!(read("settings.json"), r#"{"model":"opus"}"#);
+        assert_eq!(read("skills/review/SKILL.md"), "review");
+        assert_eq!(read("projects/-r-sam/memory/MEMORY.md"), "sam");
+        assert_eq!(read("projects/-w-sam-feat/1.jsonl"), "feat");
+        assert!(!own.join("projects/-r-sam2").exists());
+        assert!(!own.join("projects/-r-other").exists());
+        assert!(!own.join(".credentials.json").exists());
+
+        std::fs::remove_file(own.join("settings.json")).unwrap();
+        start_claude_dir(&own, Some(&account), &[Path::new("/r/sam")]).unwrap();
+        assert!(!own.join("settings.json").exists());
+    }
+
+    #[test]
+    fn tidying_an_account_hands_its_files_to_its_projects_first() {
+        let root = tempfile::tempdir().unwrap();
+        let (account, own) = (root.path().join("account"), root.path().join("own"));
+        let write = |p: PathBuf, text: &str| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        write(account.join(".credentials.json"), "login");
+        write(
+            account.join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"a@b.c"},"userID":"u1","projects":{"/r/sam":{}}}"#,
+        );
+        write(account.join("settings.json"), "account");
+        write(account.join("plugins/p/plugin.json"), "plugin");
+        write(account.join("projects/-r-sam/1.jsonl"), "history");
+        write(account.join("projects/-r-gone/1.jsonl"), "removed project");
+        write(account.join("cache/x"), "cache");
+        write(own.join("settings.json"), "project");
+        write(own.join(STARTED), "");
+
+        let projects = [(own.clone(), vec![Path::new("/r/sam")])];
+        tidy_account_dir(&account, &projects).unwrap();
+
+        let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
+        assert_eq!(read(own.join("settings.json")), "project");
+        assert_eq!(read(own.join("plugins/p/plugin.json")), "plugin");
+        assert_eq!(read(own.join("projects/-r-sam/1.jsonl")), "history");
+        assert_eq!(read(account.join("login/.credentials.json")), "login");
+        let mut left: Vec<String> = std::fs::read_dir(&account)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, [TIDIED, "login"]);
+        let identity: Value =
+            serde_json::from_str(&read(account.join("login").join(IDENTITY))).unwrap();
+        assert_eq!(identity["oauthAccount"]["emailAddress"], "a@b.c");
+        assert_eq!(identity["userID"], "u1");
+        assert!(identity["projects"].is_null());
+
+        write(account.join("settings.json"), "written by a later sign-in");
+        tidy_account_dir(&account, &projects).unwrap();
+        assert!(account.join("settings.json").exists(), "only once");
+    }
+
+    fn claude_json(dir: &Path, identity: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(".claude.json"),
+            format!(r#"{{"oauthAccount":{{"emailAddress":"{identity}"}},"numStartups":1}}"#),
+        )
+        .unwrap();
+    }
+
+    fn email(dir: &Path) -> Value {
+        read_claude_json(dir)["oauthAccount"]["emailAddress"].clone()
+    }
+
+    #[test]
+    fn a_sign_in_keeps_who_it_is_beside_the_login() {
+        let root = tempfile::tempdir().unwrap();
+        let (login, scratch) = (root.path().join("login"), root.path().join("scratch"));
+        claude_json(&scratch, "a@b.c");
+        keep_login_identity(&login, &scratch).unwrap();
+        assert_eq!(
+            stored_identity(&login).map(Value::Object),
+            Some(serde_json::json!({"oauthAccount":{"emailAddress":"a@b.c"}}))
+        );
+    }
+
+    #[test]
+    fn a_session_signing_in_again_moves_the_login_and_everyone_to_it() {
+        let root = tempfile::tempdir().unwrap();
+        let login = root.path().join("login");
+        let (a, b, c) = (
+            root.path().join("a"),
+            root.path().join("b"),
+            root.path().join("c"),
+        );
+        claude_json(&root.path().join("first"), "old@b.c");
+        keep_login_identity(&login, &root.path().join("first")).unwrap();
+        for dir in [&a, &b, &c] {
+            claude_json(dir, "old@b.c");
+        }
+        let configs = [a.clone(), b.clone(), c.clone()];
+        assert_eq!(sync_login_identity(&login, &configs).unwrap(), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        claude_json(&b, "new@b.c");
+        let changed = sync_login_identity(&login, &configs).unwrap().unwrap();
+        assert_eq!(changed["oauthAccount"]["emailAddress"], "new@b.c");
+        for dir in [&a, &b, &c] {
+            assert_eq!(email(dir), "new@b.c");
+        }
+        assert_eq!(read_claude_json(&a)["numStartups"], 1);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(a.join("x"), "").unwrap();
+        assert_eq!(sync_login_identity(&login, &configs).unwrap(), None);
+        assert_eq!(email(&root.path().join("first")), "old@b.c");
+    }
+
+    #[test]
+    fn the_identity_moves_in_beside_the_login() {
+        let root = tempfile::tempdir().unwrap();
+        let account = root.path().join("account");
+        claude_json(&account, "a@b.c");
+        std::fs::write(account.join(TIDIED), "").unwrap();
+        let login = account_login_dir(&account).unwrap();
+        assert_eq!(
+            stored_identity(&login).unwrap()["oauthAccount"]["emailAddress"],
+            "a@b.c"
+        );
+        assert!(!account.join(".claude.json").exists());
+    }
+
+    #[test]
+    fn a_worktree_starts_from_the_project_not_the_account() {
+        let root = tempfile::tempdir().unwrap();
+        let (account, project, worktree) = (
+            root.path().join("account"),
+            root.path().join("project"),
+            root.path().join("worktree"),
+        );
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("CLAUDE.md"), "account").unwrap();
+        start_claude_dir(&project, Some(&account), &[]).unwrap();
+        std::fs::write(project.join("CLAUDE.md"), "project").unwrap();
+
+        start_claude_dir(&worktree, Some(&project), &[]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("CLAUDE.md")).unwrap(),
+            "project"
+        );
+        std::fs::write(worktree.join("CLAUDE.md"), "worktree").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join("CLAUDE.md")).unwrap(),
+            "project"
+        );
+    }
+
+    #[test]
+    fn copies_who_the_login_is_into_a_project() {
+        let root = tempfile::tempdir().unwrap();
+        let (login, own) = (root.path().join("login"), root.path().join("own"));
+        claude_json(&root.path().join("signed-in"), "a@b.c");
+        keep_login_identity(&login, &root.path().join("signed-in")).unwrap();
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(
+            own.join(".claude.json"),
+            r#"{"hasCompletedOnboarding":true}"#,
+        )
+        .unwrap();
+        copy_login_identity(&login, &own).unwrap();
+        assert_eq!(email(&own), "a@b.c");
+        assert_eq!(read_claude_json(&own)["hasCompletedOnboarding"], true);
+    }
 
     #[test]
     fn leaves_scripts_and_restrictions_out_of_the_import() {

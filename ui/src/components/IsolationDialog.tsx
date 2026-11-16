@@ -8,7 +8,7 @@ import { keys, useAgentSettings, useDoctor, useIsolationSettings } from "../lib/
 import { AgentsPanel } from "./AgentsPanel";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
-import { Button, Dialog, ErrorText, Field } from "./ui";
+import { Button, Dialog, ErrorText } from "./ui";
 
 export function IsolationDialog({ current, onClose }: { current: Isolation; onClose: () => void }) {
   const qc = useQueryClient();
@@ -67,6 +67,7 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
   return (
     <Dialog
       title="Isolation"
+      info="Choose where agents run by default. Projects can override this in their settings. Setup scripts run in the same place as the agents."
       onClose={onClose}
       width={560}
       footer={
@@ -78,28 +79,22 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
         )
       }
     >
-      <p className="text-xs leading-relaxed text-muted">
-        Choose where agents run by default. Projects can override this in their settings. Setup scripts run in the same
-        place as the agents.
-      </p>
-      <Field label="Default for all projects">
-        <IsolationPicker value={isolation} onChange={setIsolation} />
-      </Field>
+      <IsolationPicker label="Default for all projects" value={isolation} onChange={setIsolation} />
       {valid ? (
         <>
           <DoctorPanel isolation={isolation} projectId={null} />
           {ready && isolation.kind === "macUser" && <AgentsPanel isolation={isolation} />}
           {ready && isContainer(isolation) && agentSettings?.accounts.length === 0 && (
-            <p className="text-xs leading-relaxed text-faint">
+            <p className="text-[13px] leading-relaxed text-faint">
               Agents are installed in a worktree's environment the first time they start there. Claude Code signs in
-              with an account: add one under Agents.
+              with an account: add one under Accounts.
             </p>
           )}
         </>
       ) : (
         <ErrorText>Use letters, digits, “_”, “.” or “-” (max 31 characters).</ErrorText>
       )}
-      {!ready && valid && <p className="text-xs text-faint">Finish the setup above; the default changes once it's done.</p>}
+      {!ready && valid && <p className="text-[13px] text-faint">Finish the setup above; the default changes once it's done.</p>}
       <ErrorText>{error}</ErrorText>
     </Dialog>
   );

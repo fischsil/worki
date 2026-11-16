@@ -5,7 +5,7 @@ import { useState } from "react";
 import { api, errorMessage, remoteLabel, type SshHost } from "../lib/api";
 import { keys, useProjects, useSshHosts, useSshPasswordSet } from "../lib/queries";
 import { ConnectionFields, connectionForm, parseConnection } from "./RemoteFields";
-import { Button, ErrorText, Field, IconButton, Input } from "./ui";
+import { Button, ErrorText, Field, IconButton, Input, PageTitle } from "./ui";
 
 /** Saved SSH connections that remote projects can share. */
 export function SshHostsSettings() {
@@ -15,12 +15,11 @@ export function SshHostsSettings() {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">SSH hosts</h2>
+      <PageTitle
+        title="SSH hosts"
+        info="Connections you can pick when adding a remote repository. Projects using a host follow its changes, including its password."
+      />
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 pb-6">
-        <p className="text-xs leading-relaxed text-faint">
-          Connections you can pick when adding a remote repository. Projects using a host follow its changes, including
-          its password.
-        </p>
         {hosts.length === 0 && editing !== "" && <p className="text-xs text-muted">No saved hosts yet.</p>}
         <div className="flex flex-col gap-1">
           {hosts.map((h) => {

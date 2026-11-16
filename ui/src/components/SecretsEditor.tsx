@@ -1,31 +1,18 @@
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
-import { api, errorMessage, type Isolation, isolationLabel, scopeKey } from "../lib/api";
-import { useAgentSettings, useIsolationSettings, useProjects, useRefreshSecrets, useSecretStatus } from "../lib/queries";
-import { Button, ErrorText, IconButton, Input, Select } from "./ui";
+import { api, errorMessage } from "../lib/api";
+import { useAgentSettings, useRefreshSecrets, useSecretStatus } from "../lib/queries";
+import { Button, ErrorText, IconButton, Input } from "./ui";
 
-/** Secrets per isolation: agents only get the ones stored for where they run. Saved immediately. */
-export function SecretsEditor() {
+/** The secrets in `scope` ("global", or "project:<id>"): names here, values in the Keychain.
+ * Saved immediately. */
+export function SecretsEditor({ scope }: { scope: string }) {
   const { data: settings } = useAgentSettings();
-  const { data: isolationSettings } = useIsolationSettings();
-  const { data: projects = [] } = useProjects();
-
-  const scopes = new Map<string, string>([["none", "Agents running as me"]]);
-  const add = (i: Isolation) => i.kind !== "none" && scopes.set(scopeKey(i), isolationLabel(i));
-  if (isolationSettings) add(isolationSettings.default);
-  for (const p of projects) {
-    if (p.remote) add({ kind: "ssh", ...p.remote });
-    else if (p.isolation.kind === "macUser") add(p.isolation);
-  }
-  for (const key of Object.keys(settings?.secrets ?? {})) if (!scopes.has(key)) scopes.set(key, key);
-
-  const [scope, setScope] = useState(() =>
-    isolationSettings ? scopeKey(isolationSettings.default) : "none",
-  );
   const names = settings?.secrets[scope] ?? [];
   const { data: status = [] } = useSecretStatus(scope, names);
   const stored = new Set(status.filter(([, ok]) => ok).map(([n]) => n));
+  const accounts = (settings?.accounts.length ?? 0) > 0;
 
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -58,26 +45,16 @@ export function SecretsEditor() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-muted">Secrets</span>
-        <Select value={scope} onChange={(e) => setScope(e.target.value)} className="h-7 text-xs">
-          {[...scopes].map(([key, label]) => (
-            <option key={key} value={key}>
-              {label}
-            </option>
-          ))}
-        </Select>
-      </div>
-      <p className="text-xs leading-relaxed text-faint">
-        Stored in your Keychain and passed as environment variables only to agents running here. Saved right away.
-      </p>
       {names.map((n) => (
-        <div key={n} className="flex items-center gap-2 px-1">
-          <span className="flex-1 font-mono text-xs">{n}</span>
-          <span className="text-[11px] text-faint">{stored.has(n) ? "stored" : "no value"}</span>
-          <IconButton label={`Remove ${n}`} onClick={() => remove(n)}>
-            <Trash2 size={13} />
-          </IconButton>
+        <div key={n} className="flex flex-col gap-0.5 px-1">
+          <div className="flex items-center gap-2">
+            <span className="flex-1 font-mono text-xs">{n}</span>
+            <span className="text-[11px] text-faint">{stored.has(n) ? "stored" : "no value"}</span>
+            <IconButton label={`Remove ${n}`} onClick={() => remove(n)}>
+              <Trash2 size={13} />
+            </IconButton>
+          </div>
+          {n === SIGN_IN_TOKEN && accounts && <AccountTokenNote />}
         </div>
       ))}
       <div className="grid grid-cols-[200px_1fr_auto] items-center gap-2 px-1">
@@ -93,7 +70,19 @@ export function SecretsEditor() {
           Add
         </Button>
       </div>
+      {name === SIGN_IN_TOKEN && accounts && !names.includes(name) && <AccountTokenNote />}
       <ErrorText>{error}</ErrorText>
     </div>
+  );
+}
+
+const SIGN_IN_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
+
+function AccountTokenNote() {
+  return (
+    <p className="text-xs text-faint">
+      Claude Code sessions of projects with an account in Docker Sandboxes, Docker or Podman sign in with the account
+      instead.
+    </p>
   );
 }

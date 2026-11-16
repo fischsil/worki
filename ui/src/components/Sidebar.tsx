@@ -23,16 +23,17 @@ import {
 import { useState } from "react";
 
 import {
+  accountOf,
   api,
   errorMessage,
   isContainer,
   type Project,
   projectIsolation,
   type PullRequest,
+  signInOf,
   type Worktree,
   worktreeLabel,
 } from "../lib/api";
-import { identityOf, isAgent, useJustChanged, usePlayful } from "../lib/playful";
 import { useWorktreeComments } from "../lib/review";
 import {
   keys,
@@ -54,7 +55,6 @@ import { installUpdate, useUpdates } from "../lib/updates";
 import { ActivityDot, summarize } from "./ActivityDot";
 import { ActivityButton } from "./ActivityPanel";
 import { PrStateIcon } from "./BranchPanel";
-import { AgentDot } from "./Playful";
 import { ResizeHandle } from "./ResizeHandle";
 import { ContextMenu, ErrorText, Hint, IconButton, Menu } from "./ui";
 import { worktreeActions } from "./worktreeActions";
@@ -125,7 +125,8 @@ function useProjectAccount(project: Project): string | null {
   const { data: agents } = useAgentSettings();
   const { data: isolation } = useIsolationSettings();
   if (!agents || !isolation || !isContainer(projectIsolation(project, isolation.default))) return null;
-  const id = agents.projectAccounts[project.id] ?? agents.defaultAccount;
+  if (signInOf(agents, project.id) === "session") return null;
+  const id = accountOf(agents, project.id);
   const account = agents.accounts.find((a) => a.id === id);
   return account ? (account.email ?? "not signed in") : null;
 }
@@ -216,12 +217,10 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
   const selected = useUi((s) => s.selectedWorktreePath === worktree.path);
   const select = useUi((s) => s.select);
   const openDialog = useUi((s) => s.openDialog);
-  const showPullRequests = useUi((s) => s.showPullRequests);
-  const playful = usePlayful();
   const qc = useQueryClient();
   const { data: status } = useWorktreeStatus(worktree.path, 30_000);
   const { data: sessions = [] } = useSessions();
-  const { data: pr } = usePullRequest(worktree.path, showPullRequests && !worktree.isMain && !!worktree.branch);
+  const { data: pr } = usePullRequest(worktree.path, !worktree.isMain && !!worktree.branch);
   const comments = useWorktreeComments(worktree.path).length;
   const busy = useWorktreeActivity(worktree.path);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
@@ -230,7 +229,6 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
   const mine = sessions.filter((s) => s.worktreePath === worktree.path);
   const activity = summarize(mine);
   const waitingOn = mine.find((s) => s.state.kind === "running" && s.activity === "waiting");
-  const agents = playful ? mine.filter((s) => isAgent(s) && s.state.kind === "running") : [];
 
   return (
     <div
@@ -264,20 +262,11 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
           <LoaderCircle size={12} className="animate-spin" />
         </Hint>
       )}
-      {agents.length > 0 ? (
-        <span className="flex shrink-0 gap-0.5">
-          {agents.slice(0, 3).map((s) => (
-            <AgentDot key={s.id} session={s} />
-          ))}
-        </span>
-      ) : (
-        activity &&
-        activity !== "exited" && (
-          <ActivityDot
-            state={activity}
-            title={waitingOn ? `${waitingOn.title} is waiting${waitingOn.attention ? `: ${waitingOn.attention}` : ""}` : undefined}
-          />
-        )
+      {activity && activity !== "exited" && (
+        <ActivityDot
+          state={activity}
+          title={waitingOn ? `${waitingOn.title} is waiting${waitingOn.attention ? `: ${waitingOn.attention}` : ""}` : undefined}
+        />
       )}
       {comments > 0 && (
         <span
@@ -323,19 +312,9 @@ function NeedsYou({ projects }: { projects: Project[] }) {
   const { data: sessions = [] } = useSessions();
   const select = useUi((s) => s.select);
   const setActive = useUi((s) => s.setActiveSession);
-  const playful = usePlayful();
 
   const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting");
-  const allQuiet = useJustChanged(waiting.length > 0, true, false, 4000);
-
-  if (waiting.length === 0) {
-    if (!playful || !allQuiet) return null;
-    return (
-      <div className="playful-fade mb-2 rounded-lg bg-added/8 px-3 py-2 fs-sidebar-xs text-added">
-        🌿 All quiet. Your agents are on it.
-      </div>
-    );
-  }
+  if (waiting.length === 0) return null;
   return (
     <div className="mb-2 rounded-lg bg-warn/8 p-1">
       <div
@@ -347,7 +326,6 @@ function NeedsYou({ projects }: { projects: Project[] }) {
       </div>
       {waiting.map((s) => {
         const project = projects.find((p) => s.worktreePath.startsWith(p.worktreeRoot) || s.worktreePath === p.repoPath);
-        const identity = identityOf(s, playful);
         return (
           <div key={s.id} className="group/need flex items-start rounded-md hover:bg-hover">
             <button
@@ -359,9 +337,8 @@ function NeedsYou({ projects }: { projects: Project[] }) {
               className="flex min-w-0 flex-1 flex-col px-2 py-1 text-left"
             >
               <span className="flex min-w-0 items-center gap-1.5 fs-sidebar">
-                {identity && <AgentDot session={s} />}
                 <span className="truncate">
-                  {identity?.name ?? s.title} <span className="text-faint">· {s.worktreePath.split("/").pop()}</span>
+                  {s.title} <span className="text-faint">· {s.worktreePath.split("/").pop()}</span>
                 </span>
               </span>
               {s.attention && <span className="truncate fs-sidebar-xs text-muted">{s.attention}</span>}

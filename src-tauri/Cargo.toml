@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 worki-core = { path = "../crates/worki-core" }
 worki-pty = { path = "../crates/worki-pty" }
 worki-isolation = { path = "../crates/worki-isolation" }
+tempfile.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
 tauri = { version = "2", features = ["macos-private-api"] }

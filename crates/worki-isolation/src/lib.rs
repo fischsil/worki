@@ -19,8 +19,8 @@ use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 
 pub use container::{
-    account_launch, sandbox_name, AccountRun, Container, Engine, DEFAULT_CONTAINER_IMAGE,
-    SANDBOX_KIT,
+    account_launch, account_login_dir, sandbox_name, AccountRun, Container, Engine,
+    DEFAULT_CONTAINER_IMAGE, SANDBOX_KIT,
 };
 pub use mac_user::{MacUser, AGENT_GROUP, DEFAULT_AGENT_USER};
 pub use none::{host_which, NoIsolation};
@@ -284,6 +284,9 @@ pub(crate) fn canonical(path: &Path) -> anyhow::Result<PathBuf> {
         .with_context(|| format!("resolve {}", path.display()))
 }
 
+/// Where a project's shared folder is inside its environments, also in `$WORKI_PROJECT_DIR`.
+pub const PROJECT_FOLDER: &str = "/worki/project";
+
 /// What an isolated agent may reach for one project: the repository's git data and, when given,
 /// one assigned worktree. `worktree_root` is only used to clean up grants from older versions.
 #[derive(Debug, Clone)]
@@ -291,10 +294,16 @@ pub struct Workspace {
     pub repo: PathBuf,
     pub worktree_root: PathBuf,
     pub worktree: Option<PathBuf>,
-    /// A Claude Code account's folder the environment shares (containers and sandboxes only).
-    pub account_dir: Option<PathBuf>,
-    /// Replace an existing environment made for another account. Only when nothing runs in it,
-    /// since replacing it stops what does.
+    /// Claude Code's config folder for the environment (`CLAUDE_CONFIG_DIR`): the project's or
+    /// the worktree's own, never one other projects use (containers and sandboxes only).
+    pub claude_dir: Option<PathBuf>,
+    /// Where Claude Code keeps its login (`CLAUDE_SECURESTORAGE_CONFIG_DIR`): the account's
+    /// folder, so projects on an account share its login and nothing else.
+    pub claude_login_dir: Option<PathBuf>,
+    /// A folder all the project's environments share, at [`PROJECT_FOLDER`] inside.
+    pub shared_folder: Option<PathBuf>,
+    /// Replace an existing environment made with other Claude Code folders or project folder.
+    /// Only when nothing runs in it, since replacing it stops what does.
     pub replace_outdated: bool,
 }
 
@@ -410,6 +419,11 @@ pub trait Backend: Send + Sync {
     /// Whether `ws` already has its environment (so `grant_access` will not create a new one).
     fn instance_exists(&self, _ws: &Workspace) -> bool {
         true
+    }
+
+    /// Whether `ws`'s worktree has its environment but it isn't running.
+    fn instance_stopped(&self, _ws: &Workspace) -> bool {
+        false
     }
 
     /// The project in `ws` is being removed from worki; drop everything held for it (all its

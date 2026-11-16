@@ -83,7 +83,7 @@ export function isolationLabel(i: Isolation): string {
   if (i.kind === "ssh") return `SSH · ${remoteLabel(i)}`;
   if (i.kind === "docker") return `Docker · ${i.image}`;
   if (i.kind === "podman") return `Podman · ${i.image}`;
-  return i.template ? `Docker Sandbox · ${i.template}` : "Docker Sandbox";
+  return i.template ? `Docker Sandboxes · ${i.template}` : "Docker Sandboxes";
 }
 
 export interface Project {
@@ -281,6 +281,41 @@ export interface AgentSettings {
   /** Account id by project id, where it isn't the default account. */
   projectAccounts: Record<string, string>;
   defaultAccount: string | null;
+  /** How a project signs in to its account, by project id, where it isn't `folder`. */
+  projectSignIn: Record<string, AccountSignIn>;
+}
+
+/** `folder`: the account's login, shared with the account's other projects. `token`: the
+ * account's `claude setup-token` token. `session`: no account; sessions sign in themselves. */
+export type AccountSignIn = "folder" | "token" | "session";
+
+/** Who shares a set of files: all the project's worktrees, or each its own. */
+export type FilesScope = "project" | "worktree";
+
+/** The secrets scope of a project's own secrets (see `secrets::project_scope`). */
+export const projectScope = (projectId: string) => `project:${projectId}`;
+
+/** The account a project's agents use: its own choice, else the default account. */
+export const accountOf = (settings: AgentSettings, projectId: string) =>
+  settings.projectAccounts[projectId] ?? settings.defaultAccount;
+
+/** How a project's sessions sign in: its own choice, signing in themselves without an account. */
+export const signInOf = (settings: AgentSettings, projectId: string): AccountSignIn =>
+  accountOf(settings, projectId) ? (settings.projectSignIn[projectId] ?? "folder") : "session";
+
+/** The local projects that sign in with `accountId`'s login, sharing it. */
+export function loginSharers(settings: AgentSettings, projects: Project[], accountId: string | null): Project[] {
+  return projects.filter(
+    (p) => !p.remote && accountOf(settings, p.id) === accountId && signInOf(settings, p.id) === "folder",
+  );
+}
+
+/** What a project's containers and sandboxes get besides its worktree. */
+export interface ProjectEnvironment {
+  /** One folder all the project's worktrees share, at `/worki/project` (`$WORKI_PROJECT_DIR`). */
+  sharedFolder: boolean;
+  /** Whether the project's Claude Code settings, CLAUDE.md and skills are shared by its worktrees. */
+  claudeFiles: FilesScope;
 }
 
 /** A Claude Code login of worki's own that projects can pick; its email is read after signing in. */
@@ -500,6 +535,8 @@ export const api = {
     req: { name: string; base: string; runSetup: boolean; isolation: ProjectIsolation },
   ) => invoke<CreatedWorktree>("create_worktree", { projectId, req }),
   activities: () => invoke<Operation[]>("activities"),
+  warmWorktree: (projectId: string, worktreePath: string) =>
+    invoke<void>("warm_worktree", { projectId, worktreePath }),
   removeWorktree: (projectId: string, req: { path: string; force: boolean; deleteBranch: boolean }) =>
     invoke<void>("remove_worktree", { projectId, req }),
   agentSettings: () => invoke<AgentSettings>("agent_settings"),
@@ -594,12 +631,28 @@ export const api = {
     channel.onmessage = onEvent;
     return invoke<ClaudeAccount>("log_in_claude_account", { id, onEvent: channel });
   },
+  /** Stores the token itself; it never reaches the UI. Its sign-in is `token:<id>`. */
+  obtainAccountToken: (id: string, onEvent: (event: LoginEvent) => void) => {
+    const channel = new Channel<LoginEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("obtain_account_token", { id, onEvent: channel });
+  },
   enterLoginCode: (id: string, code: string) => invoke<void>("enter_login_code", { id, code }),
   cancelLogin: (id: string) => invoke<void>("cancel_login", { id }),
   checkClaudeAccount: (id: string) => invoke<ClaudeAccount>("check_claude_account", { id }),
   /** Each worktree's container or sandbox switches at its next session start while nothing runs in it. */
   setProjectAccount: (projectId: string, accountId: string | null) =>
     invoke<void>("set_project_account", { projectId, accountId }),
+  setProjectSignIn: (projectId: string, signIn: AccountSignIn) =>
+    invoke<void>("set_project_sign_in", { projectId, signIn }),
+  projectClaudeDir: (projectId: string) => invoke<string>("project_claude_dir", { projectId }),
+  projectEnvironment: (projectId: string) => invoke<ProjectEnvironment>("project_environment", { projectId }),
+  setProjectEnvironment: (projectId: string, environment: ProjectEnvironment) =>
+    invoke<void>("set_project_environment", { projectId, environment }),
+  projectSharedDir: (projectId: string) => invoke<string>("project_shared_dir", { projectId }),
+  accountTokenSet: (accountId: string) => invoke<boolean>("account_token_set", { accountId }),
+  setAccountToken: (accountId: string, token: string | null) =>
+    invoke<void>("set_account_token", { accountId, token }),
   secretStatus: (scope: string, names: string[]) => invoke<[string, boolean][]>("secret_status", { scope, names }),
   setSecret: (scope: string, name: string, value: string) => invoke<void>("set_secret", { scope, name, value }),
   deleteSecret: (scope: string, name: string) => invoke<void>("delete_secret", { scope, name }),

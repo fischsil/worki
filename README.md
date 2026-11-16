@@ -61,11 +61,14 @@ checks it and cleans it up again.
   with one of your [accounts](#several-claude-accounts-side-by-side) (with User Isolation, a token
   that uses your subscription), while your own login stays untouched. Codex signs in per
   environment with a code you approve in the browser.
-- **Secrets stay in your Keychain.** Tokens are stored per isolation and passed to sessions as
-  environment variables.
+- **Secrets stay in your Keychain.** Set them for every agent or for one project; sessions get
+  them as environment variables, the project's over the global ones.
 - **Snapshots.** Install what a project needs (a JDK, system packages) once, save the worktree's
   sandbox or container as a snapshot, and the project's new worktrees start from it with
   everything installed.
+- **A shared project folder.** Turn it on, and every worktree's sandbox or container of the
+  project gets the same folder at `/worki/project` (`$WORKI_PROJECT_DIR`), for a build cache,
+  say.
 - **Agents stay put.** Environments keep running when worki quits (or stop, if you prefer), and
   Claude Code sessions pick up their conversation when worki starts again.
 - **No leftovers.** Environments are removed together with their worktree or project.
@@ -80,16 +83,24 @@ Use your company's Claude subscription for work projects and your own for side p
 same time, without signing out and in again.
 
 <p align="center">
-  <img src="docs/screenshots/accounts.png" alt="Two Claude Code accounts in the Agents settings, one marked as default; the sidebar shows each project's account" width="900">
+  <img src="docs/screenshots/accounts.png" alt="Two Claude Code accounts in the Accounts settings, one marked as default and shared by two projects" width="900">
 </p>
 
-- **Sign in once per account.** Add accounts under Settings › Agents and approve each one in your
+- **Sign in once per account.** Add accounts under Settings › Accounts and approve each one in your
   browser. worki keeps every login in its own folder, apart from your own Claude Code login.
 - **One account per project.** Mark one account as the default; any project can pick another.
   The sidebar shows each project's account, and every session shows the account it's actually
   signed in as.
 - **Real subscription logins.** Not API keys: the login renews itself, and Remote Control works.
-  All worktrees of a project share it, so you sign in once, not per worktree.
+  Every project on the account shares it, so you sign in once per account. To switch who an
+  account is, sign in again under Settings › Accounts; `/login` is off inside those sessions,
+  since it would switch every project.
+- **Projects share a login, nothing else.** Each project (or each worktree, if you like) has its
+  own Claude Code folder: settings, `CLAUDE.md`, skills, history and memory. Projects on one
+  account share only its login. Or a project signs in with the account's `claude setup-token`
+  token instead; such tokens only run the model, so Remote Control doesn't work with them. Or it
+  uses no account at all: each worktree's sessions sign in themselves with `/login`, and that
+  login is shared with nothing, not even the project's other worktrees.
 - **Switching is safe.** When a project changes account, each worktree's sandbox or container
   moves over the next time an agent starts there while none is running.
 
