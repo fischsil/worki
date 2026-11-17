@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { create } from "zustand";
 
 import {
   api,
@@ -102,15 +103,35 @@ function useRefreshGit(worktreePath: string) {
     );
 }
 
+interface CommitState {
+  message: string;
+  drafts: CommitDraft[] | null;
+  writing: boolean;
+}
+
+const NO_COMMIT: CommitState = { message: "", drafts: null, writing: false };
+
+/** Per worktree, so the message and the agent's answer survive switching tabs. */
+const useCommits = create<{
+  byWorktree: Record<string, CommitState>;
+  update: (worktreePath: string, change: Partial<CommitState>) => void;
+}>((set) => ({
+  byWorktree: {},
+  update: (path, change) =>
+    set((s) => ({ byWorktree: { ...s.byWorktree, [path]: { ...(s.byWorktree[path] ?? NO_COMMIT), ...change } } })),
+}));
+
 /** Message box and Commit button under the uncommitted files. */
 export function CommitBox({ worktreePath, files, total }: { worktreePath: string; files: string[]; total: number }) {
-  const [message, setMessage] = useState("");
+  const { message, drafts, writing } = useCommits((s) => s.byWorktree[worktreePath] ?? NO_COMMIT);
+  const update = useCommits((s) => s.update);
+  const setMessage = (message: string) => update(worktreePath, { message });
+  const setDrafts = (drafts: CommitDraft[] | null) => update(worktreePath, { drafts });
+  const setWriting = (writing: boolean) => update(worktreePath, { writing });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refresh = useRefreshGit(worktreePath);
   const { writer, writerName } = useAgentTarget(worktreePath);
-  const [writing, setWriting] = useState(false);
-  const [drafts, setDrafts] = useState<CommitDraft[] | null>(null);
   const blocked =
     files.length === 0 ? "Check at least one file to commit." : !message.trim() ? "Write a commit message to commit." : null;
 
@@ -305,7 +326,7 @@ export function BranchStatus({
       else toast(result.kind === "updated" ? `Rebased on ${base}` : `Already up to date with ${base}`, "info");
       await refresh();
     } catch (e) {
-      setFailed({ files: [], problem: errorMessage(e) });
+      setFailed({ files: [], problem: errorMessage(e).replace(/\.$/, "") });
     } finally {
       setBusy(false);
     }
@@ -342,10 +363,7 @@ export function BranchStatus({
       {failed && (
         <div className="flex flex-col gap-2 rounded-md bg-warn/10 p-2 fs-panel">
           <span>
-            {failed.files.length
-              ? `Rebasing on ${base} conflicts in ${failed.files.join(", ")}.`
-              : `Git couldn't rebase on ${base}: ${failed.problem}`}{" "}
-            Nothing was changed.
+            Git couldn't rebase on {base}: {failed.problem}. Nothing was changed.
           </span>
           <Button
             className="self-start"

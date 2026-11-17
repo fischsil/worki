@@ -121,33 +121,23 @@ fn diverge(dir: &Path) {
 }
 
 #[tokio::test]
-async fn status_reports_a_merge_stopped_on_conflicts() {
-    let tmp = repo();
-    let dir = tmp.path();
-    diverge(dir);
-    let _ = Command::new("git")
-        .args(["merge", "-q", "main"])
-        .current_dir(dir)
-        .output();
+async fn status_reports_what_stopped_on_conflicts() {
+    for (command, operation) in [
+        ("merge", GitOperation::Merge),
+        ("rebase", GitOperation::Rebase),
+    ] {
+        let tmp = repo();
+        let dir = tmp.path();
+        diverge(dir);
+        let _ = Command::new("git")
+            .args([command, "-q", "main"])
+            .current_dir(dir)
+            .output();
 
-    let status = git::status(&Host::Local, dir).await.unwrap();
-    assert_eq!(status.conflicts, ["a.txt"]);
-    assert_eq!(status.stopped, Some(GitOperation::Merge));
-}
-
-#[tokio::test]
-async fn status_reports_a_rebase_stopped_on_conflicts() {
-    let tmp = repo();
-    let dir = tmp.path();
-    diverge(dir);
-    let _ = Command::new("git")
-        .args(["rebase", "-q", "main"])
-        .current_dir(dir)
-        .output();
-
-    let status = git::status(&Host::Local, dir).await.unwrap();
-    assert_eq!(status.conflicts, ["a.txt"]);
-    assert_eq!(status.stopped, Some(GitOperation::Rebase));
+        let status = git::status(&Host::Local, dir).await.unwrap();
+        assert_eq!(status.conflicts, ["a.txt"], "{command}");
+        assert_eq!(status.stopped, Some(operation), "{command}");
+    }
 }
 
 #[tokio::test]

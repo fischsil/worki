@@ -422,11 +422,7 @@ function ChangeRow({
         />
       )}
       <span className="min-w-0 truncate fs-panel">
-        <span
-          className={clsx(
-            kind === "A" || kind === "U" ? "text-added" : kind === "D" ? "text-removed" : kind === "!" && "text-warn",
-          )}
-        >
+        <span className={KIND_COLORS[kind]}>
           {file.path.slice(slash + 1)}
         </span>
         {slash > 0 && <span className="ml-1.5 text-faint">{file.path.slice(0, slash)}</span>}
@@ -456,3 +452,5 @@ function changeKind(code: string): string {
 }
 
 const CONFLICT_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
+const KIND_COLORS: Record<string, string> = { A: "text-added", U: "text-added", D: "text-removed", "!": "text-warn" };
