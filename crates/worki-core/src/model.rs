@@ -125,6 +125,21 @@ pub struct WorktreeStatus {
     pub ahead: u32,
     pub behind: u32,
     pub upstream: Option<String>,
+    /// Files git couldn't merge, waiting to be resolved.
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    /// What stopped on `conflicts`; `None` when there are none, or for a `git stash pop`.
+    #[serde(default)]
+    pub stopped: Option<GitOperation>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GitOperation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

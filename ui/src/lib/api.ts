@@ -146,7 +146,11 @@ export interface WorktreeStatus {
   ahead: number;
   behind: number;
   upstream: string | null;
+  conflicts: string[];
+  stopped: GitOperation | null;
 }
+
+export type GitOperation = "merge" | "rebase" | "cherryPick" | "revert";
 
 export interface SetupScripts {
   project: string | null;

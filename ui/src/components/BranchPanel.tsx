@@ -26,6 +26,7 @@ import {
   type CommitInfo,
   DEFAULT_WRITER_COMMAND,
   errorMessage,
+  type GitOperation,
   type PullRequest,
   type SessionInfo,
   type Worktree,
@@ -269,7 +270,7 @@ export function Section({
         <h3 className="truncate fs-panel-sm font-semibold tracking-wide text-faint uppercase">{title}</h3>
         {aside}
       </div>
-      {scroll ? <div className="-mx-5 min-h-0 overflow-y-auto px-5">{children}</div> : children}
+      {scroll ? <div className="-mx-5 flex min-h-0 flex-col gap-3 overflow-y-auto px-5 pb-0.5">{children}</div> : children}
     </section>
   );
 }
@@ -289,21 +290,22 @@ export function BranchStatus({
   behind: number;
 }) {
   const [busy, setBusy] = useState(false);
-  const [conflicts, setConflicts] = useState<string[] | null>(null);
+  const [failed, setFailed] = useState<{ files: string[]; problem: string } | null>(null);
   const refresh = useRefreshGit(worktreePath);
   const { target, ask } = useAgentTarget(worktreePath);
 
   async function rebase() {
     setBusy(true);
-    setConflicts(null);
+    setFailed(null);
     try {
       await api.fetchRemote(worktreePath).catch((e) => toast(`Couldn't fetch, rebasing on what's here: ${errorMessage(e)}`));
       const result = await api.updateFromBase(worktreePath, base);
-      if (result.kind === "conflicts") setConflicts(result.files);
+      if (result.kind === "conflicts")
+        setFailed({ files: result.files, problem: `conflicts in ${result.files.join(", ")}` });
       else toast(result.kind === "updated" ? `Rebased on ${base}` : `Already up to date with ${base}`, "info");
       await refresh();
     } catch (e) {
-      toast(errorMessage(e));
+      setFailed({ files: [], problem: errorMessage(e) });
     } finally {
       setBusy(false);
     }
@@ -332,29 +334,70 @@ export function BranchStatus({
           {busy ? "Rebasing…" : "Rebase"}
         </Button>
       </div>
-      {behind > 0 && !conflicts && (
+      {behind > 0 && !failed && (
         <p className="fs-panel-sm text-faint">
           {base} has {plural(behind, "new commit")}. Rebase to build on them before opening a pull request.
         </p>
       )}
-      {conflicts && (
+      {failed && (
         <div className="flex flex-col gap-2 rounded-md bg-warn/10 p-2 fs-panel">
           <span>
-            Rebasing on {base} conflicts in {conflicts.join(", ")}. Nothing was changed.
+            {failed.files.length
+              ? `Rebasing on ${base} conflicts in ${failed.files.join(", ")}.`
+              : `Git couldn't rebase on ${base}: ${failed.problem}`}{" "}
+            Nothing was changed.
           </span>
           <Button
             className="self-start"
             disabled={!target}
+            title={target && `Ask ${target.title} to do the whole rebase, resolving conflicts on the way`}
             onClick={() => {
-              setConflicts(null);
-              ask(askPrompt("resolveConflicts", { base, files: conflicts.join(", ") }));
+              setFailed(null);
+              ask(askPrompt("resolveConflicts", { base, problem: failed.problem, files: failed.files.join(", ") }));
             }}
           >
             <Bot size={13} />
-            Ask agent to resolve
+            Let agent rebase
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+const OPERATION_NAMES: Record<GitOperation, string> = {
+  merge: "merge",
+  rebase: "rebase",
+  cherryPick: "cherry-pick",
+  revert: "revert",
+};
+
+/** In place of the commit box while git waits for conflicts to be resolved. */
+export function ConflictBox({
+  worktreePath,
+  files,
+  stopped,
+}: {
+  worktreePath: string;
+  files: string[];
+  stopped: GitOperation | null;
+}) {
+  const { target, ask } = useAgentTarget(worktreePath);
+  const operation = stopped ? OPERATION_NAMES[stopped] : "git operation";
+  return (
+    <div className="mx-4 mt-2 mb-4 flex flex-col gap-2 rounded-md bg-warn/10 p-3 fs-panel">
+      <span>
+        The {operation} stopped on conflicts in {plural(files.length, "file")}. Resolve them before committing.
+      </span>
+      <Button
+        className="self-start"
+        disabled={!target}
+        title={target && `Ask ${target.title} to resolve them and finish the ${operation}`}
+        onClick={() => ask(askPrompt("finishConflicts", { operation, files: files.join(", ") }))}
+      >
+        <Bot size={13} />
+        Ask agent to resolve
+      </Button>
     </div>
   );
 }
@@ -472,7 +515,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   }
 
   return (
-    <Section title="Pull request" scroll className="mt-auto max-h-[40%] border-t border-b-0">
+    <Section title="Pull request" scroll className="mt-auto max-h-[45%] gap-3.5 border-t border-b-0 pb-5">
       {isLoading && <p className="fs-panel text-faint">Checking GitHub…</p>}
       {error && <p className="fs-panel text-removed">{errorMessage(error)}</p>}
       {!isLoading && !error && !pr && (
@@ -497,7 +540,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
         <>
           <button
             onClick={() => openUrl(pr.url).catch((e) => toast(`Couldn't open the pull request: ${errorMessage(e)}`))}
-            className="flex items-start gap-2 text-left fs-panel hover:text-accent"
+            className="flex items-start gap-2 text-left leading-snug fs-panel hover:text-accent"
             title="Open on GitHub"
           >
             <PrStateIcon pr={pr} className="mt-px" />
@@ -507,7 +550,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
             </span>
           </button>
           <Checks pr={pr} />
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-1 flex flex-wrap gap-2">
             {pr.state === "OPEN" && (status?.ahead ?? 0) > 0 && (
               <Button onClick={push} disabled={busy}>
                 <ArrowUpFromLine size={13} />

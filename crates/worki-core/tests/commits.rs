@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use worki_core::git;
-use worki_core::{BaseUpdate, Host};
+use worki_core::{BaseUpdate, GitOperation, Host};
 
 fn sh(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -109,4 +109,51 @@ async fn update_from_base_rebases_or_reports_conflicts() {
         before,
         "rebase undone"
     );
+}
+
+fn diverge(dir: &Path) {
+    std::fs::write(dir.join("a.txt"), "ours\n").unwrap();
+    sh(dir, &["commit", "-q", "-am", "ours"]);
+    sh(dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("a.txt"), "theirs\n").unwrap();
+    sh(dir, &["commit", "-q", "-am", "theirs"]);
+    sh(dir, &["checkout", "-q", "work"]);
+}
+
+#[tokio::test]
+async fn status_reports_a_merge_stopped_on_conflicts() {
+    let tmp = repo();
+    let dir = tmp.path();
+    diverge(dir);
+    let _ = Command::new("git")
+        .args(["merge", "-q", "main"])
+        .current_dir(dir)
+        .output();
+
+    let status = git::status(&Host::Local, dir).await.unwrap();
+    assert_eq!(status.conflicts, ["a.txt"]);
+    assert_eq!(status.stopped, Some(GitOperation::Merge));
+}
+
+#[tokio::test]
+async fn status_reports_a_rebase_stopped_on_conflicts() {
+    let tmp = repo();
+    let dir = tmp.path();
+    diverge(dir);
+    let _ = Command::new("git")
+        .args(["rebase", "-q", "main"])
+        .current_dir(dir)
+        .output();
+
+    let status = git::status(&Host::Local, dir).await.unwrap();
+    assert_eq!(status.conflicts, ["a.txt"]);
+    assert_eq!(status.stopped, Some(GitOperation::Rebase));
+}
+
+#[tokio::test]
+async fn status_has_no_conflicts_in_a_clean_worktree() {
+    let tmp = repo();
+    let status = git::status(&Host::Local, tmp.path()).await.unwrap();
+    assert!(status.conflicts.is_empty());
+    assert_eq!(status.stopped, None);
 }

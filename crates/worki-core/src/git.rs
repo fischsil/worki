@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::host::Host;
 use crate::model::{
-    BaseUpdate, BranchChanges, ChangedFile, CommitDraft, CommitInfo, LineCounts, Worktree,
-    WorktreeStatus,
+    BaseUpdate, BranchChanges, ChangedFile, CommitDraft, CommitInfo, GitOperation, LineCounts,
+    Worktree, WorktreeStatus,
 };
 use crate::prompt::Part;
 use crate::{Error, Result};
@@ -292,11 +292,35 @@ pub async fn status(host: &Host, worktree: &Path) -> Result<WorktreeStatus> {
         )
         .await?;
     let mut status = parse_status_v2(&porcelain);
+    if !status.conflicts.is_empty() {
+        status.stopped = stopped_operation(host, worktree).await;
+    }
     drop_sandbox_placeholders(host, worktree, &mut status.changed_files);
     if let Ok(totals) = count_lines(host, worktree, "HEAD", &mut status.changed_files).await {
         (status.insertions, status.deletions) = totals;
     }
     Ok(status)
+}
+
+async fn stopped_operation(host: &Host, worktree: &Path) -> Option<GitOperation> {
+    const MARKERS: [(&str, GitOperation); 5] = [
+        ("rebase-merge", GitOperation::Rebase),
+        ("rebase-apply", GitOperation::Rebase),
+        ("MERGE_HEAD", GitOperation::Merge),
+        ("CHERRY_PICK_HEAD", GitOperation::CherryPick),
+        ("REVERT_HEAD", GitOperation::Revert),
+    ];
+    let mut args = vec!["rev-parse", "--path-format=absolute"];
+    for (marker, _) in MARKERS {
+        args.extend(["--git-path", marker]);
+    }
+    let paths = host.git(worktree, args).await.ok()?;
+    for (path, (_, op)) in paths.lines().zip(MARKERS) {
+        if host.exists(Path::new(path)).await.unwrap_or(false) {
+            return Some(op);
+        }
+    }
+    None
 }
 
 /// Leaves out the empty, read-only files Claude Code's sandbox puts in the worktree to protect
@@ -348,6 +372,7 @@ pub fn parse_status_v2(text: &str) -> WorktreeStatus {
         } else if let Some(rest) = entry.strip_prefix("u ") {
             if let Some((xy, path)) = code_and_path(rest, 10) {
                 push(xy, path);
+                status.conflicts.push(path.into());
             }
         } else if let Some(path) = entry.strip_prefix("? ") {
             push("??", path);
@@ -981,6 +1006,7 @@ mod tests {
         let text = "# branch.oid abc\0# branch.head feat\0# branch.upstream origin/feat\0# branch.ab +2 -1\0\
                     1 .M N... 100644 100644 100644 a a src/main.rs\0\
                     2 R. N... 100644 100644 100644 a a R100 new name.rs\0old.rs\0\
+                    u UU N... 100644 100644 100644 100644 a b c both.rs\0\
                     ? notes.txt\0";
         let s = parse_status_v2(text);
         assert_eq!((s.ahead, s.behind), (2, 1));
@@ -995,9 +1021,11 @@ mod tests {
             [
                 (" M", "src/main.rs"),
                 ("R ", "new name.rs"),
+                ("UU", "both.rs"),
                 ("??", "notes.txt")
             ]
         );
+        assert_eq!(s.conflicts, ["both.rs"]);
     }
 
     #[test]

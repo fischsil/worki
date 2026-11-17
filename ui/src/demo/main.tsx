@@ -94,10 +94,12 @@ const status: Record<string, unknown> = {
     ahead: 2,
     behind: 0,
     upstream: "origin/feat/checkout-redesign",
+    conflicts: [],
+    stopped: null,
   },
-  [login]: { changedFiles: [file("src/auth/session.ts", " M")], insertions: 12, deletions: 4, ahead: 0, behind: 0, upstream: null },
+  [login]: { changedFiles: [file("src/auth/session.ts", " M")], insertions: 12, deletions: 4, ahead: 0, behind: 0, upstream: null, conflicts: [], stopped: null },
 };
-const clean = { changedFiles: [], insertions: 0, deletions: 0, ahead: 0, behind: 0, upstream: "origin/main" };
+const clean = { changedFiles: [], insertions: 0, deletions: 0, ahead: 0, behind: 0, upstream: "origin/main", conflicts: [], stopped: null };
 
 const commits = [
   { sha: "a1b2c3d4", subject: "Show a skeleton while the cart loads", author: "Claude", time: now - 25 * 60 },

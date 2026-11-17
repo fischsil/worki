@@ -7,7 +7,7 @@ import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from
 import { type ReviewComment, reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
-import { BranchCommits, BranchStatus, CommitBox, PrSection, Section } from "./BranchPanel";
+import { BranchCommits, BranchStatus, CommitBox, ConflictBox, PrSection, Section } from "./BranchPanel";
 import { DiffView } from "./DiffView";
 import { OpenInMenu } from "./OpenInMenu";
 import { ResizeHandle } from "./ResizeHandle";
@@ -156,7 +156,9 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                     diffFile={diffFile}
                     onOpen={openFile}
                   />
-                  {!!status?.changedFiles.length && (
+                  {status?.conflicts.length ? (
+                    <ConflictBox worktreePath={worktree.path} files={status.conflicts} stopped={status.stopped} />
+                  ) : !!status?.changedFiles.length && (
                     <CommitBox
                       worktreePath={worktree.path}
                       files={status.changedFiles.map((f) => f.path).filter((p) => !excluded.has(p))}
@@ -420,7 +422,11 @@ function ChangeRow({
         />
       )}
       <span className="min-w-0 truncate fs-panel">
-        <span className={clsx(kind === "A" || kind === "U" ? "text-added" : kind === "D" && "text-removed")}>
+        <span
+          className={clsx(
+            kind === "A" || kind === "U" ? "text-added" : kind === "D" ? "text-removed" : kind === "!" && "text-warn",
+          )}
+        >
           {file.path.slice(slash + 1)}
         </span>
         {slash > 0 && <span className="ml-1.5 text-faint">{file.path.slice(0, slash)}</span>}
@@ -444,6 +450,9 @@ function ChangeRow({
 
 function changeKind(code: string): string {
   if (code === "??") return "U";
+  if (CONFLICT_CODES.has(code)) return "!";
   const c = code.trim()[0] ?? "M";
   return c === "R" || c === "C" ? "R" : c;
 }
+
+const CONFLICT_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
