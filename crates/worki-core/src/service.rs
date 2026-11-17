@@ -837,10 +837,9 @@ impl ProjectService {
             .unwrap_or_default())
     }
 
-    /// Isolation a worktree runs in: its own choice, else the project default, else the global
-    /// default. Remote projects always use their SSH connection.
-    /// Saves the worktree's container as an image or sbx template named `tag`, and with
-    /// `use_for_project` makes the project create new worktree environments from it.
+    /// Runs the cleanup script in the worktree's container, then saves the container as an image
+    /// or sbx template named `tag`. With `use_for_project` the project creates new worktree
+    /// environments from it.
     pub async fn save_environment_template(
         &self,
         project_id: &str,
@@ -861,7 +860,7 @@ impl ProjectService {
             log(LogLine::Info("Running the cleanup script…".into()));
             self.grant_access(&project, Some(worktree)).await?;
             let script = format!("cd ~ || exit 1\n{cleanup}");
-            run_setup_script(&isolation, worktree, &script, Vec::new(), log.clone())
+            run_script(&isolation, worktree, &script, Vec::new(), log.clone())
                 .await
                 .map_err(|e| Error::Isolation(format!("the cleanup script failed: {e}")))?;
         }
@@ -1012,6 +1011,8 @@ impl ProjectService {
         Ok(users)
     }
 
+    /// Isolation a worktree runs in: its own choice, else the project default, else the global
+    /// default. Remote projects always use their SSH connection.
     pub fn isolation_for_worktree(&self, project: &Project, worktree: &Path) -> Result<Isolation> {
         if project.remote.is_some() {
             return self.isolation_for(project);
@@ -1405,7 +1406,7 @@ impl ProjectService {
                 ];
                 env.extend(self.secret_env(Some(id), &isolation)?);
                 if let Err(e) =
-                    run_setup_script(&isolation, &worktree.path, script, env, log.clone()).await
+                    run_script(&isolation, &worktree.path, script, env, log.clone()).await
                 {
                     log(LogLine::Stderr(e.to_string()));
                     setup_error = Some(e.to_string());
@@ -1481,7 +1482,7 @@ async fn find_worktree(host: &Host, repo: &Path, path: &Path) -> Result<Worktree
     })
 }
 
-async fn run_setup_script(
+async fn run_script(
     isolation: &Isolation,
     worktree: &Path,
     script: &str,
