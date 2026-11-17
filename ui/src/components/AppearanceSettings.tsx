@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Square, Squircle, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { FONT_SIZES, type Theme, useUi } from "../lib/store";
@@ -11,6 +11,11 @@ const themes: Choice<Theme>[] = [
   { value: "dark", label: "Dark", icon: <Moon size={13} /> },
 ];
 
+const corners: Choice<boolean>[] = [
+  { value: false, label: "Standard", icon: <Square size={13} /> },
+  { value: true, label: "Rounded", icon: <Squircle size={13} /> },
+];
+
 export function AppearanceSettings() {
   const ui = useUi();
   return (
@@ -19,6 +24,10 @@ export function AppearanceSettings() {
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
         <Group title="Theme">
           <Segmented choices={themes} value={ui.theme} onChange={ui.setTheme} />
+        </Group>
+
+        <Group title="Corners">
+          <Segmented choices={corners} value={ui.rounded} onChange={ui.setRounded} />
         </Group>
 
         <Group title="Font sizes">

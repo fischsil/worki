@@ -66,6 +66,7 @@ interface UiState {
   changesScope: ChangesScope;
   panelWidths: Record<Panel, number>;
   theme: Theme;
+  rounded: boolean;
   terminalFontSize: number;
   panelFontSize: number;
   diffFontSize: number;
@@ -92,6 +93,7 @@ interface UiState {
   setChangesScope: (scope: ChangesScope) => void;
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
+  setRounded: (rounded: boolean) => void;
   setTerminalFontSize: (size: number) => void;
   setPanelFontSize: (size: number) => void;
   setDiffFontSize: (size: number) => void;
@@ -126,6 +128,7 @@ export const useUi = create<UiState>()(
         terminal: PANEL_LIMITS.terminal.initial,
       },
       theme: "system",
+      rounded: false,
       terminalFontSize: 13,
       panelFontSize: 13,
       diffFontSize: 13,
@@ -159,6 +162,7 @@ export const useUi = create<UiState>()(
         set((s) => ({ panelWidths: { ...s.panelWidths, [panel]: Math.round(Math.min(max, Math.max(min, width))) } }));
       },
       setTheme: (theme) => set({ theme }),
+      setRounded: (rounded) => set({ rounded }),
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
       setPanelFontSize: (panelFontSize) => set({ panelFontSize }),
       setDiffFontSize: (diffFontSize) => set({ diffFontSize }),
@@ -182,6 +186,7 @@ export const useUi = create<UiState>()(
         changesScope,
         panelWidths,
         theme,
+        rounded,
         terminalFontSize,
         panelFontSize,
         diffFontSize,
@@ -203,6 +208,7 @@ export const useUi = create<UiState>()(
         changesScope,
         panelWidths,
         theme,
+        rounded,
         terminalFontSize,
         panelFontSize,
         diffFontSize,

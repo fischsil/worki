@@ -64,6 +64,7 @@ export function Sidebar() {
   const addProject = useAddProject();
   const openDialog = useUi((s) => s.openDialog);
   const width = useUi((s) => s.panelWidths.sidebar);
+  const rounded = useUi((s) => s.rounded);
 
   return (
     <aside className="fs-sidebar relative flex h-full shrink-0 flex-col bg-sidebar" style={{ width }}>
@@ -103,20 +104,41 @@ export function Sidebar() {
           </p>
         )}
       </nav>
-      <div className="relative flex shrink-0 items-center border-t border-line px-2 py-1.5">
-        <button
-          onClick={() => openDialog({ kind: "settings", tab: "general" })}
-          title="Settings (⌘,)"
-          className="flex h-7 items-center gap-2 rounded-md px-2 text-muted hover:bg-hover hover:text-fg"
-        >
-          <Settings size={14} />
-          Settings
-        </button>
-        <ActivityButton />
-        <KeepAwakeButton />
-        <UpdateButton />
-      </div>
+      {!rounded && <StatusBar />}
     </aside>
+  );
+}
+
+export function StatusBar({ fullWidth = false }: { fullWidth?: boolean }) {
+  const openDialog = useUi((s) => s.openDialog);
+  return (
+    <div
+      className={clsx(
+        "fs-sidebar relative flex shrink-0 items-center border-t border-line bg-sidebar px-2",
+        fullWidth ? "py-0.5" : "py-1.5",
+      )}
+    >
+      <button
+        onClick={() => openDialog({ kind: "settings", tab: "general" })}
+        title="Settings (⌘,)"
+        className="flex h-7 items-center gap-2 rounded-md px-2 text-muted hover:bg-hover hover:text-fg"
+      >
+        <Settings size={14} />
+        Settings
+      </button>
+      <KeepAwakeButton />
+      {fullWidth ? (
+        <div className="ml-auto flex min-w-0 items-center gap-1">
+          <UpdateButton />
+          <ActivityButton fromRight />
+        </div>
+      ) : (
+        <>
+          <ActivityButton />
+          <UpdateButton />
+        </>
+      )}
+    </div>
   );
 }
 

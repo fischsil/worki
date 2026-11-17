@@ -59,7 +59,7 @@ export function TerminalPanel({ project, worktree }: { project: Project; worktre
   const where = project.remote ? `on ${shell?.runAs ?? "the remote host"}` : "on this Mac, not isolated";
 
   return (
-    <div className="relative flex max-h-[80%] shrink-0 flex-col border-t border-line" style={{ height }}>
+    <div className="shell-pane relative flex max-h-[80%] shrink-0 flex-col border-t border-line" style={{ height }}>
       <ResizeHandle panel="terminal" edge="top" />
       <div className="flex h-7 shrink-0 items-center gap-0.5 border-b border-line bg-bar pr-1 pl-1.5">
         {shells.map((s, i) => (

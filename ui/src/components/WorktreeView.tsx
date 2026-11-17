@@ -48,8 +48,8 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
   return (
-    <div className="flex h-full flex-col">
-      <header data-tauri-drag-region className="flex h-13 shrink-0 items-center gap-3.5 border-b border-line bg-bar px-5">
+    <div className="worktree-view flex h-full flex-col">
+      <header data-tauri-drag-region className="worktree-header flex h-13 shrink-0 items-center gap-3.5 border-b border-line bg-bar px-5">
         <Hint title={worktree.branch ? `Branch ${worktree.branch}` : "Detached HEAD: no branch checked out"} className="text-muted">
           <GitBranch size={15} />
         </Hint>
@@ -89,15 +89,15 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
         </IconButton>
       </header>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <section className="flex min-h-0 min-w-[240px] flex-1 flex-col">
+      <div className="worktree-panes flex min-h-0 flex-1 overflow-hidden">
+        <section className="pane flex min-h-0 min-w-[240px] flex-1 flex-col">
           <div className="min-h-0 flex-1">
             <SessionArea project={project} worktree={worktree} />
           </div>
         </section>
 
         {showChanges && diffFile && (
-          <section className="relative min-h-0 shrink-0 border-l border-line" style={{ width: widths.diff }}>
+          <section className="pane relative min-h-0 shrink-0 border-l border-line" style={{ width: widths.diff }}>
             <ResizeHandle panel="diff" edge="left" />
             <DiffView
               key={`${diffFile}:${branchScope}`}
@@ -111,7 +111,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
         )}
 
         {showChanges && (
-          <aside className="relative flex min-h-0 shrink-0 flex-col border-l border-line bg-bar" style={{ width: widths.changes }}>
+          <aside className="pane relative flex min-h-0 shrink-0 flex-col border-l border-line bg-bar" style={{ width: widths.changes }}>
             <ResizeHandle panel="changes" edge="left" />
             <div className="flex h-13 shrink-0 items-center gap-2 border-b border-line px-4">
               {(["uncommitted", "branch"] as const)

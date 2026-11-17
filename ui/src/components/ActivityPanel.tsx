@@ -9,7 +9,7 @@ import { clockTime, elapsed, fullTime, useNow } from "../lib/time";
 import { LogView, useDismiss } from "./ui";
 
 /** The sidebar's activity indicator: the running operation's latest step, and the panel of recent ones. */
-export function ActivityButton() {
+export function ActivityButton({ fromRight = false }: { fromRight?: boolean }) {
   const { data = [] } = useActivities();
   const { seenAt, see } = useSeenActivities();
   const [open, setOpen] = useState(false);
@@ -32,7 +32,7 @@ export function ActivityButton() {
   }, [open, see]);
 
   return (
-    <div ref={root} className="flex min-w-0 flex-1">
+    <div ref={root} className="flex min-w-0 flex-1 justify-end">
       <button
         onClick={() => setOpen((o) => !o)}
         title={running ? `${running.title}: ${lastStep(running) ?? "working…"}` : "Recent activity"}
@@ -53,7 +53,8 @@ export function ActivityButton() {
       {open && (
         <div
           className={clsx(
-            "absolute bottom-full left-2 z-40 mb-1 flex flex-col overflow-hidden rounded-lg border border-line bg-elevated shadow-lg transition-[width]",
+            "absolute bottom-full z-40 mb-1 flex flex-col overflow-hidden rounded-lg border border-line bg-elevated shadow-lg transition-[width]",
+            fromRight ? "right-2" : "left-2",
             wide ? "max-h-[85vh] w-[min(760px,calc(100vw-1rem))]" : "max-h-[70vh] w-[400px]",
           )}
         >

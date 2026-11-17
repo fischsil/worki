@@ -10,7 +10,7 @@ import { QuittingOverlay } from "./components/QuittingOverlay";
 import { RemoveWorktreeDialog } from "./components/RemoveWorktreeDialog";
 import { SaveEnvironmentDialog } from "./components/SaveEnvironmentDialog";
 import { SettingsView } from "./components/SettingsView";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, StatusBar } from "./components/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { Tooltips } from "./components/Tooltips";
 import { Button } from "./components/ui";
@@ -28,7 +28,7 @@ import { toast } from "./lib/toast";
 
 export function App() {
   const { data: projects = [], isFetched } = useProjects();
-  const { selectedProjectId, selectedWorktreePath, select, dialog, openDialog, closeDialog } = useUi();
+  const { selectedProjectId, selectedWorktreePath, select, dialog, openDialog, closeDialog, rounded } = useUi();
   const project = projects.find((p) => p.id === selectedProjectId) ?? projects[0];
   const { data: worktrees = [] } = useWorktrees(project?.id ?? "");
   const worktree = worktrees.find((w) => w.path === selectedWorktreePath) ?? worktrees[0];
@@ -124,20 +124,23 @@ export function App() {
   const dialogProject = dialog && "projectId" in dialog ? projects.find((p) => p.id === dialog.projectId) : undefined;
 
   return (
-    <div className="flex h-full">
+    <div data-tauri-drag-region className="app-shell flex h-full flex-col">
       <QuittingOverlay />
-      <Sidebar />
-      <main className="min-w-0 flex-1 border-l border-line bg-panel">
-        {project && worktree ? (
-          <WorktreeView key={worktree.path} project={project} worktree={worktree} />
-        ) : isFetched && projects.length === 0 ? (
-          <Welcome />
-        ) : project ? (
-          <EmptyProject onCreate={() => openDialog({ kind: "newWorktree", projectId: project.id })} />
-        ) : (
-          <div data-tauri-drag-region className="h-full" />
-        )}
-      </main>
+      <div data-tauri-drag-region className="flex min-h-0 flex-1">
+        <Sidebar />
+        <main className="app-main min-w-0 flex-1 border-l border-line bg-panel">
+          {project && worktree ? (
+            <WorktreeView key={worktree.path} project={project} worktree={worktree} />
+          ) : isFetched && projects.length === 0 ? (
+            <Welcome />
+          ) : project ? (
+            <EmptyProject onCreate={() => openDialog({ kind: "newWorktree", projectId: project.id })} />
+          ) : (
+            <div data-tauri-drag-region className="h-full" />
+          )}
+        </main>
+      </div>
+      {rounded && <StatusBar fullWidth />}
 
       {dialog?.kind === "newWorktree" && dialogProject && (
         <NewWorktreeDialog project={dialogProject} onClose={closeDialog} />
