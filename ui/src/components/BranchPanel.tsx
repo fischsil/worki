@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { ask as confirm } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import {
@@ -470,7 +471,18 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   const refresh = useRefreshGit(worktree.path);
   const addComment = useReview((s) => s.add);
 
+  const rewrites = (status?.behind ?? 0) > 0;
+  const remote = status?.upstream ?? `origin/${worktree.branch}`;
+
   async function push() {
+    if (
+      rewrites &&
+      !(await confirm(
+        `Replace ${remote} with the rebased branch?\n\nThe commits there are overwritten by the rebased ones. Anyone who checked out the branch has to reset to the new one. It's refused if someone pushed commits there that this branch doesn't have.`,
+        { title: "Push rebased branch", kind: "warning", okLabel: "Replace" },
+      ))
+    )
+      return;
     setBusy(true);
     try {
       await api.pushBranch(worktree.path);
@@ -570,9 +582,14 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
           <Checks pr={pr} />
           <div className="mt-1 flex flex-wrap gap-2">
             {pr.state === "OPEN" && (status?.ahead ?? 0) > 0 && (
-              <Button onClick={push} disabled={busy}>
+              <Button
+                onClick={push}
+                disabled={busy}
+                variant={rewrites ? "danger" : "secondary"}
+                title={rewrites ? `Overwrites ${remote} on GitHub with the rebased branch` : undefined}
+              >
                 <ArrowUpFromLine size={13} />
-                Push {status!.ahead} {status!.ahead === 1 ? "commit" : "commits"}
+                {rewrites ? "Force push rebased branch…" : `Push ${plural(status!.ahead, "commit")}`}
               </Button>
             )}
             {pr.state === "OPEN" && (

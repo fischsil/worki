@@ -113,7 +113,7 @@ pub async fn create_pull_request(
     body: &str,
     draft: bool,
 ) -> Result<PullRequest> {
-    host.git(worktree, ["push", "-u", "origin", "HEAD"]).await?;
+    push(host, worktree).await?;
     let mut args = vec![
         "pr", "create", "--base", base, "--title", title, "--body", body,
     ];
@@ -129,11 +129,22 @@ pub async fn create_pull_request(
         })
 }
 
-/// Pushes new commits to the branch of an existing pull request.
+/// Pushes the worktree's branch to `origin`. A rebased branch replaces the one there, but only
+/// when the commits there are ones this branch was rebased from, not ones pushed since.
 pub async fn push(host: &Host, worktree: &Path) -> Result<()> {
-    host.git(worktree, ["push", "-u", "origin", "HEAD"])
-        .await
-        .map(drop)
+    host.git(
+        worktree,
+        [
+            "push",
+            "--force-with-lease",
+            "--force-if-includes",
+            "-u",
+            "origin",
+            "HEAD",
+        ],
+    )
+    .await
+    .map(drop)
 }
 
 const REVIEW_THREADS: &str =

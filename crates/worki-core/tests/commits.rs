@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use worki_core::git;
+use worki_core::{git, github};
 use worki_core::{BaseUpdate, GitOperation, Host};
 
 fn sh(dir: &Path, args: &[&str]) {
@@ -146,4 +146,76 @@ async fn status_has_no_conflicts_in_a_clean_worktree() {
     let status = git::status(&Host::Local, tmp.path()).await.unwrap();
     assert!(status.conflicts.is_empty());
     assert_eq!(status.stopped, None);
+}
+
+fn with_remote() -> (tempfile::TempDir, tempfile::TempDir) {
+    let tmp = repo();
+    let remote = tempfile::tempdir().unwrap();
+    sh(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    let url = remote.path().to_str().unwrap();
+    sh(tmp.path(), &["remote", "add", "origin", url]);
+    sh(tmp.path(), &["push", "-q", "origin", "main"]);
+    (tmp, remote)
+}
+
+#[tokio::test]
+async fn push_replaces_the_branch_after_a_rebase() {
+    let (tmp, _remote) = with_remote();
+    let dir = tmp.path();
+    let host = Host::Local;
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    sh(dir, &["add", "."]);
+    sh(dir, &["commit", "-q", "-m", "feature"]);
+    github::push(&host, dir).await.unwrap();
+
+    sh(dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    sh(dir, &["add", "."]);
+    sh(dir, &["commit", "-q", "-m", "on main"]);
+    sh(dir, &["checkout", "-q", "work"]);
+    sh(dir, &["rebase", "-q", "main"]);
+
+    github::push(&host, dir).await.unwrap();
+    let local = host.git(dir, ["rev-parse", "HEAD"]).await.unwrap();
+    let remote = host.git(dir, ["rev-parse", "origin/work"]).await.unwrap();
+    assert_eq!(local, remote);
+}
+
+#[tokio::test]
+async fn push_keeps_commits_someone_else_pushed() {
+    let (tmp, remote) = with_remote();
+    let dir = tmp.path();
+    let host = Host::Local;
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    sh(dir, &["add", "."]);
+    sh(dir, &["commit", "-q", "-m", "feature"]);
+    github::push(&host, dir).await.unwrap();
+
+    let other = tempfile::tempdir().unwrap();
+    let clone = other.path().join("clone");
+    sh(
+        other.path(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "work",
+            remote.path().to_str().unwrap(),
+            "clone",
+        ],
+    );
+    sh(&clone, &["config", "user.name", "t"]);
+    sh(&clone, &["config", "user.email", "t@t"]);
+    std::fs::write(clone.join("d.txt"), "d\n").unwrap();
+    sh(&clone, &["add", "."]);
+    sh(&clone, &["commit", "-q", "-m", "someone else"]);
+    sh(&clone, &["push", "-q", "origin", "work"]);
+
+    sh(dir, &["fetch", "-q", "origin"]);
+    sh(dir, &["commit", "-q", "--amend", "-m", "feature, reworded"]);
+
+    assert!(github::push(&host, dir).await.is_err());
+    let theirs = host.git(&clone, ["rev-parse", "HEAD"]).await.unwrap();
+    let remote_tip = host.git(dir, ["rev-parse", "origin/work"]).await.unwrap();
+    assert_eq!(theirs, remote_tip);
 }
