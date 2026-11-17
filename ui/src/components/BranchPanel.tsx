@@ -362,10 +362,19 @@ export function BranchStatus({
         </p>
       )}
       {failed && (
-        <div className="flex flex-col gap-2 rounded-md bg-warn/10 p-2 fs-panel">
-          <span>
-            Git couldn't rebase on {base}: {failed.problem}. Nothing was changed.
-          </span>
+        <div className="flex min-w-0 flex-col gap-2.5 rounded-md bg-warn/10 p-3 fs-panel">
+          {failed.files.length ? (
+            <>
+              <span>
+                Rebasing on {base} hit conflicts in {plural(failed.files.length, "file")}, so nothing was changed.
+              </span>
+              <FileNames files={failed.files} />
+            </>
+          ) : (
+            <span className="break-words">
+              Git couldn't rebase on {base}: {failed.problem}. Nothing was changed.
+            </span>
+          )}
           <Button
             className="self-start"
             disabled={!target}
@@ -381,6 +390,23 @@ export function BranchStatus({
         </div>
       )}
     </div>
+  );
+}
+
+/** File names first, their folders after and cut off when the panel is too narrow. */
+function FileNames({ files }: { files: string[] }) {
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {files.map((path) => {
+        const slash = path.lastIndexOf("/");
+        return (
+          <li key={path} className="truncate font-mono fs-panel-sm" title={path}>
+            {path.slice(slash + 1)}
+            {slash > 0 && <span className="ml-1.5 text-faint">{path.slice(0, slash)}</span>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -404,10 +430,11 @@ export function ConflictBox({
   const { target, ask } = useAgentTarget(worktreePath);
   const operation = stopped ? OPERATION_NAMES[stopped] : "git operation";
   return (
-    <div className="mx-4 mt-2 mb-4 flex flex-col gap-2 rounded-md bg-warn/10 p-3 fs-panel">
+    <div className="mx-4 mt-2 mb-4 flex min-w-0 flex-col gap-2.5 rounded-md bg-warn/10 p-3 fs-panel">
       <span>
         The {operation} stopped on conflicts in {plural(files.length, "file")}. Resolve them before committing.
       </span>
+      <FileNames files={files} />
       <Button
         className="self-start"
         disabled={!target}
