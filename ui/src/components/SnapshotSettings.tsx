@@ -1,11 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Camera, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { Camera, Eraser, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { api, errorMessage, type Snapshot, type SnapshotEngine } from "../lib/api";
-import { useSnapshots } from "../lib/queries";
-import { ErrorText, IconButton, PageTitle } from "./ui";
+import { useSnapshotCleanup, useSnapshots } from "../lib/queries";
+import { SnapshotCleanupDialog } from "./SnapshotCleanupDialog";
+import { Button, ErrorText, IconButton, PageTitle } from "./ui";
 
 const ENGINES: Record<SnapshotEngine, string> = {
   dockerSandbox: "Docker Sandboxes",
@@ -36,6 +37,8 @@ const totalSize = (snapshots: Snapshot[]) => {
 export function SnapshotSettings() {
   const { data: snapshots, isFetching, refetch, error: loadError } = useSnapshots();
   const [error, setError] = useState<string | null>(null);
+  const { data: cleanup } = useSnapshotCleanup();
+  const [editingCleanup, setEditingCleanup] = useState(false);
   const engines = (Object.keys(ENGINES) as SnapshotEngine[]).filter((e) => snapshots?.some((s) => s.engine === e));
 
   return (
@@ -45,7 +48,16 @@ export function SnapshotSettings() {
         info="Sandboxes and containers saved with Save snapshot in a worktree's isolation, newest first. Delete the ones no project or worktree starts from anymore to free disk space. Engines that aren't running aren't listed."
       />
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
-        <div className="flex items-start justify-end gap-3">
+        <div className="flex items-center justify-end gap-3">
+          <Button
+            onClick={() => setEditingCleanup(true)}
+            disabled={cleanup === undefined}
+            title="A script that runs inside the sandbox or container before each snapshot is saved"
+          >
+            <Eraser size={13} />
+            Cleanup script…
+            <span className="text-faint">{cleanup?.trim() ? "On" : "Off"}</span>
+          </Button>
           <IconButton label="Refresh" onClick={() => refetch()}>
             <RefreshCw size={13} className={isFetching ? "animate-spin" : undefined} />
           </IconButton>
@@ -78,6 +90,9 @@ export function SnapshotSettings() {
         )}
         <ErrorText>{error ?? (loadError ? errorMessage(loadError) : null)}</ErrorText>
       </div>
+      {editingCleanup && cleanup !== undefined && (
+        <SnapshotCleanupDialog script={cleanup} onClose={() => setEditingCleanup(false)} />
+      )}
     </section>
   );
 }

@@ -16,6 +16,7 @@ const DEFAULT_CLAUDE_SETTINGS = {
 };
 
 let keepAwake = false;
+let snapshotCleanup = "";
 
 let agentSettings = {
   profiles: [
@@ -525,6 +526,11 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return activities;
     case "keep_awake":
       return keepAwake;
+    case "snapshot_cleanup":
+      return snapshotCleanup;
+    case "set_snapshot_cleanup":
+      snapshotCleanup = args.script;
+      return null;
     case "set_keep_awake":
       keepAwake = args.on;
       return null;

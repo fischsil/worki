@@ -33,6 +33,7 @@ export const keys = {
   pullRequest: (path: string) => ["pullRequest", path] as const,
   environmentTemplates: (kind: string) => ["environmentTemplates", kind] as const,
   snapshots: ["environmentTemplates", "snapshots"] as const,
+  snapshotCleanup: ["snapshotCleanup"] as const,
   openers: ["openers"] as const,
   appIcon: (app: string) => ["appIcon", app] as const,
 };
@@ -75,6 +76,8 @@ export const useEnvironmentTemplates = (isolation: Isolation) =>
   });
 
 export const useSnapshots = () => useQuery({ queryKey: keys.snapshots, queryFn: api.snapshots });
+
+export const useSnapshotCleanup = () => useQuery({ queryKey: keys.snapshotCleanup, queryFn: api.snapshotCleanup });
 
 export const useIsolationSettings = () =>
   useQuery({ queryKey: keys.isolationSettings, queryFn: api.isolationSettings });

@@ -247,6 +247,8 @@ pub fn run() {
             sessions::restore_remote_sessions,
             sessions::restore_agent_sessions,
             commands::save_environment_template,
+            commands::snapshot_cleanup,
+            commands::set_snapshot_cleanup,
             commands::environment_templates,
             commands::snapshots,
             commands::save_file,

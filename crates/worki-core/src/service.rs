@@ -23,6 +23,7 @@ const SAVED_SESSIONS_KEY: &str = "agentSessions";
 const WORKTREE_ISOLATION_KEY: &str = "worktreeIsolation";
 const SNAPSHOTS_KEY: &str = "snapshots";
 const KEEP_AWAKE_KEY: &str = "keepAwake";
+const SNAPSHOT_CLEANUP_KEY: &str = "snapshotCleanup";
 /// [`ProjectEnvironment`]s by project id, where they aren't the default.
 const PROJECT_ENVIRONMENTS_KEY: &str = "projectEnvironments";
 
@@ -773,6 +774,15 @@ impl ProjectService {
         self.store.set_setting(KEEP_AWAKE_KEY, &on)
     }
 
+    /// Script run inside an environment before each snapshot of it is saved.
+    pub fn snapshot_cleanup(&self) -> Result<String> {
+        self.setting(SNAPSHOT_CLEANUP_KEY)
+    }
+
+    pub fn set_snapshot_cleanup(&self, script: &str) -> Result<()> {
+        self.store.set_setting(SNAPSHOT_CLEANUP_KEY, &script)
+    }
+
     pub fn isolation_settings(&self) -> Result<IsolationSettings> {
         self.setting(ISOLATION_SETTINGS_KEY)
     }
@@ -837,9 +847,28 @@ impl ProjectService {
         worktree: &Path,
         tag: &str,
         use_for_project: bool,
+        log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
     ) -> Result<Project> {
         let project = self.store.get_project(project_id)?;
-        let backend = self.isolation_for_worktree(&project, worktree)?.backend();
+        let isolation = self.isolation_for_worktree(&project, worktree)?;
+        if !isolation.is_container() {
+            return Err(Error::Isolation(
+                "only container isolations can be saved as a snapshot".into(),
+            ));
+        }
+        let cleanup = self.snapshot_cleanup()?;
+        if !cleanup.trim().is_empty() {
+            log(LogLine::Info("Running the cleanup script…".into()));
+            self.grant_access(&project, Some(worktree)).await?;
+            let script = format!("cd ~ || exit 1\n{cleanup}");
+            run_setup_script(&isolation, worktree, &script, Vec::new(), log.clone())
+                .await
+                .map_err(|e| Error::Isolation(format!("the cleanup script failed: {e}")))?;
+        }
+        log(LogLine::Info(
+            "Saving the worktree's environment as an image…".into(),
+        ));
+        let backend = isolation.backend();
         let worktree = worktree.to_path_buf();
         let tag = tag.trim().to_owned();
         let saved = blocking(move || backend.save_template(&worktree, &tag)).await?;

@@ -529,6 +529,8 @@ export const api = {
     invoke<FailedCheck[]>("pr_failed_checks", { worktreePath, number }),
   environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
   snapshots: () => invoke<Snapshot[]>("snapshots"),
+  snapshotCleanup: () => invoke<string>("snapshot_cleanup"),
+  setSnapshotCleanup: (script: string) => invoke<void>("set_snapshot_cleanup", { script }),
   writeClipboard: (text: string) => invoke<void>("write_clipboard", { text }),
   saveFile: (path: string, contents: Uint8Array) => invoke<void>("save_file", { path, contents: Array.from(contents) }),
   deleteSnapshot: (engine: SnapshotEngine, name: string) => invoke<void>("delete_snapshot", { engine, name }),

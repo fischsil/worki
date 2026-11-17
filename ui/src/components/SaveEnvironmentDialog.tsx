@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api, errorMessage, isContainer, type Project, type Worktree, worktreeLabel } from "../lib/api";
-import { keys, useSessions, useWorktrees } from "../lib/queries";
+import { keys, useSessions, useSnapshotCleanup, useWorktrees } from "../lib/queries";
 import { toast } from "../lib/toast";
 import { Button, Checkbox, Dialog, Field, Input, WarnText } from "./ui";
 import { useEffectiveIsolation } from "./WorktreeIsolation";
@@ -32,6 +32,7 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
   const qc = useQueryClient();
   const isolation = useEffectiveIsolation(project, worktree);
   const { data: sessions = [] } = useSessions();
+  const { data: cleanup } = useSnapshotCleanup();
   const [name, setName] = useState(() => defaultName(project));
   const [useForProject, setUseForProject] = useState(true);
 
@@ -94,6 +95,9 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
       </p>
       <p className="text-xs text-muted">
         Your code isn't included. Sign-ins are (Codex's login, for example), so keep it to yourself.
+        {cleanup?.trim()
+          ? " The cleanup script from Settings › Snapshots runs in it first."
+          : " Add a cleanup script in Settings › Snapshots to keep snapshots small and remove sign-ins first."}
       </p>
       <Field label="Snapshot name">
         <Input className="font-mono text-xs" value={name} onChange={(e) => setName(e.target.value)} />

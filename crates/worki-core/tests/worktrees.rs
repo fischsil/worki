@@ -409,3 +409,22 @@ async fn a_worktree_made_again_starts_without_the_old_sessions() {
     create().await.unwrap();
     assert!(svc.saved_sessions().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn snapshot_cleanup_never_runs_without_a_container() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("app");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    let svc = ProjectService::new(Store::in_memory().unwrap());
+    let project = svc.add_project(&repo).await.unwrap();
+    svc.set_snapshot_cleanup("touch cleanup-ran").unwrap();
+    assert_eq!(svc.snapshot_cleanup().unwrap(), "touch cleanup-ran");
+
+    let saved = svc
+        .save_environment_template(&project.id, &repo, "worki-test:v1", false, |_| {})
+        .await;
+
+    assert!(saved.is_err());
+    assert!(!repo.join("cleanup-ran").exists());
+}

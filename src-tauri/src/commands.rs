@@ -243,6 +243,16 @@ pub async fn delete_snapshot(
 }
 
 #[tauri::command]
+pub fn snapshot_cleanup(state: State<'_, AppState>) -> CmdResult<String> {
+    state.projects.snapshot_cleanup().map_err(err)
+}
+
+#[tauri::command]
+pub fn set_snapshot_cleanup(state: State<'_, AppState>, script: String) -> CmdResult<()> {
+    state.projects.set_snapshot_cleanup(&script).map_err(err)
+}
+
+#[tauri::command]
 pub async fn save_environment_template(
     state: State<'_, AppState>,
     project_id: String,
@@ -256,10 +266,12 @@ pub async fn save_environment_template(
         format!("Save snapshot {tag}"),
         scope,
         |log| async move {
-            log.step("Saving the worktree's environment as an image…");
             state
                 .projects
-                .save_environment_template(&project_id, &worktree_path, &tag, use_for_project)
+                .save_environment_template(&project_id, &worktree_path, &tag, use_for_project, {
+                    let log = log.clone();
+                    move |line| log.line(line)
+                })
                 .await
                 .map_err(err)
         },
