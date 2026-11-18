@@ -272,7 +272,7 @@ pub async fn list_branches(host: &Host, repo: &Path) -> Result<Vec<String>> {
             [
                 "for-each-ref",
                 "--sort=-committerdate",
-                "--format=%(refname:short)",
+                "--format=%(refname:short)\t%(upstream:track)",
                 "refs/heads",
                 "refs/remotes",
             ],
@@ -280,8 +280,9 @@ pub async fn list_branches(host: &Host, repo: &Path) -> Result<Vec<String>> {
         .await?;
     Ok(out
         .lines()
-        .filter(|l| !l.is_empty() && !l.ends_with("/HEAD") && *l != "origin")
-        .map(Into::into)
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(name, track)| !name.ends_with("/HEAD") && *name != "origin" && *track != "[gone]")
+        .map(|(name, _)| name.to_owned())
         .collect())
 }
 

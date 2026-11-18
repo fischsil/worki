@@ -105,6 +105,9 @@ async fn compares_with_the_default_branch_once_the_base_is_gone() {
     sh(dir, &["config", "branch.merged.remote", "origin"]);
     sh(dir, &["config", "branch.merged.merge", "refs/heads/merged"]);
     assert_eq!(git::compare_base(&host, dir, "merged").await, "origin/main");
+    let branches = git::list_branches(&host, dir).await.unwrap();
+    assert!(branches.contains(&"origin/main".to_owned()));
+    assert!(!branches.contains(&"merged".to_owned()));
 
     sh(dir, &["tag", "v1"]);
     assert_eq!(git::compare_base(&host, dir, "v1").await, "v1");
