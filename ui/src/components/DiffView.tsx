@@ -35,11 +35,10 @@ import { Button, DiffStat, ErrorText, IconButton, Textarea } from "./ui";
 
 /** Keeps comment rows in view while the code beside them scrolls sideways. */
 const PINNED = "sticky left-0 w-[100cqw] px-3";
-/** A comment card, starting where the code starts, after the two line number columns. */
-const CARD = "my-1.5 max-w-3xl overflow-hidden rounded-xl border bg-elevated shadow-sm";
-const INSET = "mr-3 ml-[9em]";
+/** A comment card, as wide as the diff pane. */
+const CARD = "my-1.5 overflow-hidden rounded-xl border bg-elevated shadow-sm";
 
-const GUTTER = "relative w-[4.5em] px-2 text-right text-faint select-none";
+const GUTTER = "relative w-[2.5em] px-1 text-right text-faint select-none";
 
 /** Shiki's font style bits. */
 const ITALIC = 1;
@@ -229,11 +228,8 @@ export function DiffView({
                 return (
                   <Fragment key={i}>
                     <tr
-                      onClick={() => {
-                        if (!window.getSelection()?.toString()) setDrafting(key);
-                      }}
                       className={clsx(
-                        "group cursor-pointer",
+                        "group",
                         l.kind === "add" && "bg-diff-added",
                         l.kind === "del" && "bg-diff-removed",
                       )}
@@ -245,7 +241,8 @@ export function DiffView({
                       <td className={GUTTER}>
                         <button
                           title="Comment on this line"
-                          className="absolute top-0 -left-1 hidden size-[19px] items-center justify-center rounded bg-accent text-accent-fg group-hover:flex"
+                          onClick={() => setDrafting(key)}
+                          className="absolute top-0 right-0.5 hidden size-[19px] items-center justify-center rounded bg-accent text-accent-fg group-hover:flex"
                         >
                           <MessageSquarePlus size={11} />
                         </button>
@@ -339,16 +336,7 @@ function GapRow({
   );
 }
 
-function CommentRow({
-  worktreePath,
-  comment,
-  inset = true,
-}: {
-  worktreePath: string;
-  comment: ReviewComment;
-  /** Lines the card up with the code, past the line number columns. */
-  inset?: boolean;
-}) {
+function CommentRow({ worktreePath, comment }: { worktreePath: string; comment: ReviewComment }) {
   const update = useReview((s) => s.update);
   const remove = useReview((s) => s.remove);
   const [editing, setEditing] = useState(false);
@@ -361,7 +349,6 @@ function CommentRow({
             <CommentEditor
               initial={comment.text}
               where={where}
-              inset={inset}
               submitLabel="Save"
               onCancel={() => setEditing(false)}
               onSubmit={(text) => {
@@ -370,7 +357,7 @@ function CommentRow({
               }}
             />
           ) : (
-            <div className={clsx(CARD, inset && INSET, "group/comment border-line")}>
+            <div className={clsx(CARD, "group/comment border-line")}>
               <CommentHeader where={where}>
                 <div className="flex items-center opacity-0 transition-opacity group-hover/comment:opacity-100">
                   <IconButton label="Edit comment" onClick={() => setEditing(true)}>
@@ -422,7 +409,7 @@ function OrphanComments({
                   {c.line}: {c.code.trim()}
                 </td>
               </tr>
-              <CommentRow worktreePath={worktreePath} comment={c} inset={false} />
+              <CommentRow worktreePath={worktreePath} comment={c} />
             </Fragment>
           ))}
         </tbody>
@@ -542,7 +529,6 @@ function CommentHeader({ where, children }: { where: string; children?: ReactNod
 function CommentEditor({
   initial,
   where,
-  inset = true,
   submitLabel,
   sendTo,
   onSubmit,
@@ -551,7 +537,6 @@ function CommentEditor({
 }: {
   initial: string;
   where: string;
-  inset?: boolean;
   submitLabel: string;
   sendTo?: string;
   onSubmit: (text: string) => void;
@@ -562,13 +547,26 @@ function CommentEditor({
   const [error, setError] = useState<string | null>(null);
   const submit = () => text.trim() && onSubmit(text.trim());
   const canSend = !!onSend && !!sendTo;
+  const card = useRef<HTMLDivElement>(null);
+  const cancel = useRef(onCancel);
+  cancel.current = onCancel;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector("[data-overlay]")) return;
+      const focus = document.activeElement;
+      if (focus?.matches("input, textarea, [contenteditable]") && !card.current?.contains(focus)) return;
+      cancel.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   const send = () => {
     if (!text.trim() || !canSend) return;
     setError(null);
     onSend(text.trim()).catch((e) => setError(errorMessage(e)));
   };
   return (
-    <div className={clsx(CARD, inset && INSET, "border-accent/60 ring-3 ring-accent/12")}>
+    <div ref={card} className={clsx(CARD, "border-accent/60 ring-3 ring-accent/12")}>
       <CommentHeader where={where} />
       <Textarea
         autoFocus
@@ -583,7 +581,6 @@ function CommentEditor({
             if (e.metaKey || e.ctrlKey || !canSend) submit();
             else send();
           }
-          if (e.key === "Escape") onCancel();
         }}
       />
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line bg-panel/60 px-3 py-2 [&_button]:whitespace-nowrap">
