@@ -65,6 +65,40 @@ async fn commits_only_the_picked_files() {
 }
 
 #[tokio::test]
+async fn compares_with_the_default_branch_once_the_base_is_gone() {
+    let tmp = repo();
+    let dir = tmp.path();
+    let host = Host::Local;
+    sh(dir, &["remote", "add", "origin", "https://example.invalid/repo.git"]);
+    sh(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    sh(
+        dir,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    assert_eq!(
+        git::compare_base(&host, dir, "origin/feature").await,
+        "origin/main"
+    );
+    assert_eq!(
+        git::compare_base(&host, dir, "feature").await,
+        "origin/main"
+    );
+
+    sh(dir, &["branch", "merged"]);
+    assert_eq!(git::compare_base(&host, dir, "merged").await, "merged");
+    sh(dir, &["config", "branch.merged.remote", "origin"]);
+    sh(dir, &["config", "branch.merged.merge", "refs/heads/merged"]);
+    assert_eq!(git::compare_base(&host, dir, "merged").await, "origin/main");
+
+    sh(dir, &["tag", "v1"]);
+    assert_eq!(git::compare_base(&host, dir, "v1").await, "v1");
+}
+
+#[tokio::test]
 async fn update_from_base_rebases_or_reports_conflicts() {
     let tmp = repo();
     let dir = tmp.path();

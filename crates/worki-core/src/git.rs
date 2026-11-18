@@ -724,29 +724,42 @@ pub fn parse_log(text: &str) -> Vec<CommitInfo> {
 }
 
 /// What a worktree is compared with and rebased onto: `origin/<base>` when the repository has it
-/// (what pull requests are compared against), else the local branch.
+/// (what pull requests are compared against), else the local branch. When the branch it started
+/// from is gone, such as one deleted after its pull request was merged, the default branch.
 pub async fn compare_base(host: &Host, worktree: &Path, base: &str) -> String {
-    if base.starts_with("origin/") {
-        return base.to_owned();
+    if let Some(found) = existing_base(host, worktree, base).await {
+        return found;
     }
-    let remote = format!("origin/{base}");
-    let exists = host
-        .git(
-            worktree,
-            [
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("refs/remotes/{remote}"),
-            ],
-        )
+    let default = default_base(host, worktree).await;
+    existing_base(host, worktree, &default)
         .await
-        .is_ok();
-    if exists {
-        remote
-    } else {
-        base.to_owned()
+        .unwrap_or_else(|| base.to_owned())
+}
+
+async fn existing_base(host: &Host, worktree: &Path, base: &str) -> Option<String> {
+    let local = base.strip_prefix("origin/");
+    let remote = local.map_or_else(|| format!("origin/{base}"), |_| base.to_owned());
+    if ref_exists(host, worktree, &format!("refs/remotes/{remote}")).await {
+        return Some(remote);
     }
+    let usable = local.is_none()
+        && ref_exists(host, worktree, base).await
+        && !upstream_gone(host, worktree, base).await;
+    usable.then(|| base.to_owned())
+}
+
+/// Whether local branch `branch` tracks a remote branch that was deleted.
+async fn upstream_gone(host: &Host, worktree: &Path, branch: &str) -> bool {
+    host.git(
+        worktree,
+        [
+            "for-each-ref",
+            "--format=%(upstream:track)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .await
+    .is_ok_and(|track| track.trim() == "[gone]")
 }
 
 /// Fetches all remotes, dropping branches deleted there.
