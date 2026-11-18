@@ -815,6 +815,7 @@ const ui = {
   changesScope: scene === "branch" ? "branch" : "uncommitted",
   panelWidths: { sidebar: 256, diff: 520, changes: 320 },
   theme: "dark",
+  rounded: true,
   terminalFontSize: 13,
   reopenSessions: true,
   activeSession: { [checkout]: scene === "chat" || scene === "hero" ? "s5" : "s1" },

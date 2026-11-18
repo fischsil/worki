@@ -19,6 +19,15 @@
   <img src="docs/screenshots/hero.png" alt="A Claude Code chat in worki profiling slow tests, with a timing chart and three background jobs running" width="900">
 </p>
 
+Install with [Homebrew](https://brew.sh), or download the DMG from the
+[latest release](https://github.com/fischsil/worki/releases/latest):
+
+```bash
+brew tap fischsil/tap
+brew trust fischsil/tap
+brew install --cask worki
+```
+
 Coding agents are at their best when you let them run on their own: accept edits, run the tests,
 try again. That's exactly when you don't want them anywhere near your SSH keys, your browser
 profile or your other repositories.
