@@ -26,8 +26,25 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const { data: status, error } = useWorktreeStatus(worktree.path, 5_000);
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id: string } | null>(null);
+  const [diffExpanded, setDiffExpanded] = useState(false);
+  const shownDiff = showChanges ? diffFile : null;
+  const diffOpen = !!shownDiff;
+  const expanded = diffOpen && diffExpanded;
+  const toggleExpanded = () => setDiffExpanded((e) => !e);
+  useEffect(() => {
+    if (!diffOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        toggleExpanded();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [diffOpen]);
   const openFile = (file: string | null) => {
     setDiffFile(file);
+    if (!file) setDiffExpanded(false);
     setFocus(null);
   };
   const openComment = (c: ReviewComment) => {
@@ -90,22 +107,27 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
       </header>
 
       <div className="worktree-panes flex min-h-0 flex-1 overflow-hidden">
-        <section className="pane flex min-h-0 min-w-[240px] flex-1 flex-col">
+        <section className={clsx("pane min-h-0 min-w-[240px] flex-1 flex-col", expanded ? "hidden" : "flex")}>
           <div className="min-h-0 flex-1">
             <SessionArea project={project} worktree={worktree} />
           </div>
         </section>
 
-        {showChanges && diffFile && (
-          <section className="pane relative min-h-0 shrink-0 border-l border-line" style={{ width: widths.diff }}>
-            <ResizeHandle panel="diff" edge="left" />
+        {shownDiff && (
+          <section
+            className={clsx("pane relative min-h-0 border-l border-line", expanded ? "min-w-0 flex-1" : "shrink-0")}
+            style={{ width: expanded ? undefined : widths.diff }}
+          >
+            {!expanded && <ResizeHandle panel="diff" edge="left" />}
             <DiffView
-              key={`${diffFile}:${branchScope}`}
+              key={`${shownDiff}:${branchScope}`}
               worktreePath={worktree.path}
-              file={diffFile}
+              file={shownDiff}
               base={branchScope ? base : null}
               focus={focus}
-              onClose={() => setDiffFile(null)}
+              expanded={expanded}
+              onToggleExpand={toggleExpanded}
+              onClose={() => openFile(null)}
             />
           </section>
         )}

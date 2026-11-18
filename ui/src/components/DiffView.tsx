@@ -8,7 +8,9 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   MessageSquare,
+  Maximize2,
   MessageSquarePlus,
+  Minimize2,
   Pencil,
   Send,
   Trash2,
@@ -113,6 +115,8 @@ export function DiffView({
   file,
   base,
   focus,
+  expanded,
+  onToggleExpand,
   onClose,
 }: {
   worktreePath: string;
@@ -120,6 +124,8 @@ export function DiffView({
   base: string | null;
   /** The comment to scroll to; a new object scrolls to it again. */
   focus?: { id: string } | null;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onClose: () => void;
 }) {
   const { data, error, isLoading } = useFileDiff(worktreePath, file, base);
@@ -183,6 +189,9 @@ export function DiffView({
         </span>
         {base && <span className="fs-diff-sm text-faint">vs {base}</span>}
         {parsed && <DiffStat insertions={added} deletions={removed} />}
+        <IconButton label={expanded ? "Show the agent again (⌘I)" : "Expand the diff (⌘I)"} onClick={onToggleExpand}>
+          {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </IconButton>
         <IconButton label="Close diff" onClick={onClose}>
           <X size={14} />
         </IconButton>
