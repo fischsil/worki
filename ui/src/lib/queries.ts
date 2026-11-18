@@ -7,6 +7,7 @@ import { useUi } from "./store";
 export const keys = {
   projects: ["projects"] as const,
   keepAwake: ["keepAwake"] as const,
+  chatImage: (sessionId: string, image: number) => ["chatImage", sessionId, image] as const,
   activities: ["activities"] as const,
   worktrees: (projectId: string) => ["worktrees", projectId] as const,
   status: (path: string) => ["status", path] as const,

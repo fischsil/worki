@@ -388,7 +388,7 @@ export type AgentStatusKind = "requesting" | "thinking" | "writing" | "tool" | "
 export type ChatEvent = (
   | { type: "session"; model: string | null; permissionMode: string | null; effort: string | null }
   | { type: "options"; models: ModelChoice[]; permissionModes: string[] }
-  | { type: "user"; id: string | null; text: string; attachments: string[] }
+  | { type: "user"; id: string | null; text: string; attachments: SentAttachment[] }
   | { type: "userRead"; id: string }
   | { type: "textDelta"; id: string; text: string; parent: string | null }
   | { type: "text"; id: string; text: string; parent: string | null }
@@ -415,6 +415,12 @@ export interface ModelChoice {
   label: string;
   description: string | null;
   effortLevels: string[];
+}
+
+/** What the conversation shows of an attachment; `image` names one of the session's images, for `chatImage`. */
+export interface SentAttachment {
+  name: string;
+  image: number | null;
 }
 
 /** A file worki reads and sends along, or an image pasted from the clipboard (base64). */
@@ -561,6 +567,8 @@ export const api = {
   /** Starts an agent as a chat; `attachSession` then streams one `ChatEvent` as JSON per line. */
   spawnChatSession: (projectId: string, worktreePath: string, profileId: string, resumeId: string | null = null) =>
     invoke<SessionInfo>("spawn_chat_session", { projectId, worktreePath, profileId, resumeId }),
+  /** An image sent in a chat session, as a data URL. */
+  chatImage: (id: string, image: number) => invoke<string>("chat_image", { id, image }),
   sendChatMessage: (id: string, text: string, attachments: ChatAttachment[] = []) =>
     invoke<void>("send_chat_message", { id, text, attachments }),
   answerChatPermission: (id: string, requestId: string, answer: PermissionAnswer) =>

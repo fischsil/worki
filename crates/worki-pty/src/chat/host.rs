@@ -44,6 +44,8 @@ pub(crate) struct Chat {
     protocol: Mutex<Box<dyn ChatProtocol>>,
     turn: Mutex<Turn>,
     stderr: Mutex<VecDeque<String>>,
+    /// Images sent in the conversation, as data URLs; events name them by index.
+    images: Mutex<Vec<String>>,
 }
 
 /// Where a chat's conversation stands, for its activity.
@@ -140,14 +142,18 @@ impl SessionHost {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
         };
+        let mut images = Vec::new();
+        let mut history = spec.history;
+        keep_images(&mut images, &mut history);
         let mut replay = VecDeque::new();
-        push_lines(&mut replay, &event_lines(&spec.history), REPLAY_BYTES);
+        push_lines(&mut replay, &event_lines(&history), REPLAY_BYTES);
         let chat = Arc::new(Chat {
             stdin: Mutex::new(stdin),
             child: Mutex::new(child),
             protocol: Mutex::new(spec.protocol),
             turn: Mutex::default(),
             stderr: Mutex::default(),
+            images: Mutex::new(images),
         });
         let start = lock(&chat.protocol).start();
         if let Err(e) = chat.send(&start) {
@@ -202,10 +208,10 @@ impl SessionHost {
         emit(
             &session,
             &self.on_change,
-            &[ChatEvent::User {
+            vec![ChatEvent::User {
                 id: Some(message_id),
                 text: text.into(),
-                attachments: attachments.iter().map(|a| a.name().to_owned()).collect(),
+                attachments: attachments.iter().map(Attachment::sent).collect(),
             }],
         );
         chat.send(&lines)
@@ -254,7 +260,7 @@ impl SessionHost {
         emit(
             &session,
             &self.on_change,
-            &[ChatEvent::PermissionResolved {
+            vec![ChatEvent::PermissionResolved {
                 request_id: request_id.into(),
                 allowed,
                 elsewhere: false,
@@ -271,6 +277,14 @@ impl SessionHost {
                 .set(setting)
                 .ok_or_else(|| anyhow!("this agent can't change that setting"))
         })
+    }
+
+    /// An image sent in chat session `id`, as a data URL.
+    pub fn chat_image(&self, id: &str, image: usize) -> Result<String> {
+        let session = self.get(id)?;
+        let chat = session.io.chat().context("not a chat session")?;
+        let url = lock(&chat.images).get(image).cloned();
+        url.context("the image is gone")
     }
 
     /// Stops what a chat agent is doing; it waits for the next message afterwards.
@@ -294,7 +308,7 @@ impl SessionHost {
         if let Some(update) = state {
             apply_state(&session, &self.on_change, update);
         }
-        emit(&session, &self.on_change, &events);
+        emit(&session, &self.on_change, events);
         chat.send(&lines)
     }
 }
@@ -315,7 +329,7 @@ fn pump_chat(stdout: impl Read, session: &Session, on_change: &OnChange) {
         if let Some(update) = state {
             apply_state(session, on_change, update);
         }
-        emit(session, on_change, &events);
+        emit(session, on_change, events);
     }
 }
 
@@ -348,7 +362,7 @@ fn wait_chat(session: &Arc<Session>, sessions: &SessionMap, on_change: &OnChange
         let lines = lock(&chat.stderr);
         lines.iter().cloned().collect::<Vec<_>>().join("\n")
     });
-    emit(session, on_change, &[ChatEvent::Exited { code, error }]);
+    emit(session, on_change, vec![ChatEvent::Exited { code, error }]);
     let info = {
         let mut info = lock(&session.info);
         info.state = SessionState::Exited { code };
@@ -363,14 +377,15 @@ fn wait_chat(session: &Arc<Session>, sessions: &SessionMap, on_change: &OnChange
 
 /// Adds chat events to the session's history, sends them to attached sinks and updates its
 /// activity.
-fn emit(session: &Session, on_change: &OnChange, events: &[ChatEvent]) {
+fn emit(session: &Session, on_change: &OnChange, mut events: Vec<ChatEvent>) {
     if events.is_empty() {
         return;
     }
     let chat = session.io.chat().expect("chat session");
+    keep_images(&mut lock(&chat.images), &mut events);
     {
         let mut turn = lock(&chat.turn);
-        for event in events {
+        for event in &events {
             match event {
                 ChatEvent::User { .. } | ChatEvent::UserRead { .. } => turn.working = true,
                 ChatEvent::Permission {
@@ -396,13 +411,27 @@ fn emit(session: &Session, on_change: &OnChange, events: &[ChatEvent]) {
             }
         }
     }
-    let bytes = event_lines(events);
+    let bytes = event_lines(&events);
     {
         let mut out = lock(&session.output);
         push_lines(&mut out.replay, &bytes, REPLAY_BYTES);
         out.sinks.retain_mut(|(_, sink)| sink(&bytes));
     }
     refresh(session, on_change);
+}
+
+/// Moves the images of user messages into `images`, so the history only names them.
+fn keep_images(images: &mut Vec<String>, events: &mut [ChatEvent]) {
+    for event in events {
+        if let ChatEvent::User { attachments, .. } = event {
+            for attachment in attachments {
+                if let Some(url) = attachment.data_url.take() {
+                    attachment.image = Some(images.len());
+                    images.push(url);
+                }
+            }
+        }
+    }
 }
 
 /// One JSON line per event, stamped with when it was recorded (`at`, Unix milliseconds), so
@@ -444,7 +473,26 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
+    use crate::chat::SentAttachment;
     use crate::Sink;
+
+    #[test]
+    fn keeps_images_out_of_the_history() {
+        let mut images = vec!["data:image/png;base64,old".to_owned()];
+        let mut events = vec![ChatEvent::User {
+            id: None,
+            text: "look".into(),
+            attachments: vec![
+                SentAttachment::named("notes.md"),
+                SentAttachment::image("shot.png", "data:image/png;base64,new".into()),
+            ],
+        }];
+        keep_images(&mut images, &mut events);
+        assert_eq!(images[1], "data:image/png;base64,new");
+        let line = String::from_utf8(event_lines(&events)).unwrap();
+        assert!(line.contains(r#"{"image":1,"name":"shot.png"}"#), "{line}");
+        assert!(!line.contains("base64"), "{line}");
+    }
 
     fn channel_sink() -> (Sink, mpsc::Receiver<Vec<u8>>) {
         let (tx, rx) = mpsc::channel();

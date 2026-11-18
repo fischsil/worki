@@ -231,6 +231,7 @@ pub fn run() {
             sessions::spawn_chat_session,
             sessions::send_chat_message,
             sessions::answer_chat_permission,
+            sessions::chat_image,
             sessions::interrupt_chat,
             sessions::background_chat_commands,
             sessions::stop_chat_tasks,

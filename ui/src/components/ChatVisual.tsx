@@ -137,6 +137,16 @@ function Overlay({ tools, onClose, children }: { tools: ReactNode; onClose: () =
   );
 }
 
+export function ImageViewer({ src, onClose }: { src: string; onClose: () => void }) {
+  return (
+    <Overlay tools={null} onClose={onClose}>
+      <div className="flex h-full items-center justify-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <img src={src} alt="" className="max-h-full max-w-full rounded-md object-contain" />
+      </div>
+    </Overlay>
+  );
+}
+
 function SvgDrawing({ source }: { source: string }) {
   const clean = DOMPurify.sanitize(source, { USE_PROFILES: { svg: true, svgFilters: true } });
   if (!/<svg[\s>]/i.test(clean) || !/<\/svg>\s*$/i.test(source.trim())) return <Source source={source} />;

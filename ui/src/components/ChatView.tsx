@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Bouncy, ChaoticOrbit, DotPulse, DotStream, DotWave, Helix, Mirage, Orbit, Ping, Pulsar, Quantum, Ripples, Squircle, TailChase, Tailspin, Trio, Waveform } from "ldrs/react";
@@ -57,13 +59,15 @@ import {
   errorMessage,
   type ModelChoice,
   type PermissionAnswer,
+  type SentAttachment,
   type SessionInfo,
 } from "../lib/api";
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
+import { keys } from "../lib/queries";
 import { elapsed, useNow } from "../lib/time";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
-import { ChatVisual, VISUAL_LANGUAGES } from "./ChatVisual";
+import { ChatVisual, ImageViewer, VISUAL_LANGUAGES } from "./ChatVisual";
 import { Button, ErrorText, Textarea } from "./ui";
 
 type Permission = Extract<ChatItem, { kind: "permission" }>;
@@ -208,6 +212,9 @@ function relative(path: unknown, root: string): string {
 type UserItem = Extract<ChatItem, { kind: "user" }>;
 
 function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }) {
+  const [viewing, setViewing] = useState<string | null>(null);
+  const images = item.attachments.filter((a): a is SentAttachment & { image: number } => a.image !== null);
+  const files = item.attachments.filter((a) => a.image === null);
   return (
     <div
       className={clsx(
@@ -216,18 +223,40 @@ function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }
       )}
     >
       {item.text}
-      {item.attachments.length > 0 && (
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {images.map((a) => (
+            <ChatImage key={a.image} session={session} image={a.image} name={a.name} onOpen={setViewing} />
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {item.attachments.map((name, i) => (
+          {files.map((a, i) => (
             <span key={i} className="flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 fs-chat-xs text-muted">
               <Paperclip size={10} />
-              {name}
+              {a.name}
             </span>
           ))}
         </div>
       )}
+      {viewing && <ImageViewer src={viewing} onClose={() => setViewing(null)} />}
       {item.queued && <QueuedNote session={session} />}
     </div>
+  );
+}
+
+function ChatImage({ session, image, name, onOpen }: { session: SessionInfo; image: number; name: string; onOpen: (url: string) => void }) {
+  const { data: url } = useQuery({
+    queryKey: keys.chatImage(session.id, image),
+    queryFn: () => api.chatImage(session.id, image),
+    staleTime: Infinity,
+  });
+  if (!url) return <div className="size-24 animate-pulse rounded-md border border-line bg-hover" />;
+  return (
+    <button onClick={() => onOpen(url)} title={name} className="overflow-hidden rounded-md border border-line">
+      <img src={url} alt={name} className="block max-h-60 max-w-full object-contain" />
+    </button>
   );
 }
 
@@ -703,7 +732,10 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
 
   async function pick() {
     const picked = await openDialog({ multiple: true, title: "Attach files" }).catch(() => null);
-    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    attachFiles(Array.isArray(picked) ? picked : picked ? [picked] : []);
+  }
+
+  function attachFiles(paths: string[]) {
     setAttached((a) => [
       ...a,
       ...paths.map((path) => ({
@@ -727,6 +759,21 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
       setError(errorMessage(err));
     }
   }
+
+  const [dropping, setDropping] = useState(false);
+  useEffect(() => {
+    // Tauri handles file drops itself, so the page sees no drop events, only this one for the whole window.
+    const overChat = ({ x, y }: { x: number; y: number }) => {
+      const chat = input.current?.closest("[data-chat]");
+      return !!chat?.contains(document.elementFromPoint(x / devicePixelRatio, y / devicePixelRatio));
+    };
+    const unlisten = getCurrentWebview().onDragDropEvent(({ payload }) => {
+      const over = payload.type !== "leave" && overChat(payload.position);
+      setDropping(over && payload.type !== "drop");
+      if (over && payload.type === "drop") attachFiles(payload.paths);
+    });
+    return () => void unlisten.then((stop) => stop());
+  }, []);
 
   const stop = () => api.interruptChat(session.id).catch((e) => setError(errorMessage(e)));
   const stopJobs = (ids: string[]) => api.stopChatTasks(session.id, ids).catch((e) => setError(errorMessage(e)));
@@ -757,7 +804,12 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
     <div className="shrink-0 border-t border-line px-5 py-3">
       <div className="mx-auto flex max-w-5xl flex-col gap-1.5">
         {hasJobs && <BackgroundJobs tasks={chat.background} onStop={stopJobs} />}
-        <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-panel px-2 py-1.5 focus-within:border-accent">
+        <div
+          className={clsx(
+            "flex flex-col gap-1.5 rounded-lg border bg-panel px-2 py-1.5 focus-within:border-accent",
+            dropping ? "border-accent bg-accent/10" : "border-line",
+          )}
+        >
           {attached.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
               {attached.map((a) => (
@@ -779,7 +831,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
           <div className={lineBox}>
             <button
               onClick={pick}
-              title="Attach files (or paste an image)"
+              title="Attach files (or drop or paste them)"
               className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
             >
               <Paperclip size={14} />

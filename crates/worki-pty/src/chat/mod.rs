@@ -36,13 +36,13 @@ pub enum ChatEvent {
         models: Vec<ModelChoice>,
         permission_modes: Vec<String>,
     },
-    /// The user's message, as worki sent it, with the names of what was attached. `id` is set
+    /// The user's message, as worki sent it, with what was attached. `id` is set
     /// for a message sent in this session, which the agent then reads (`UserRead`), possibly
     /// only after its current step.
     User {
         id: Option<String>,
         text: String,
-        attachments: Vec<String>,
+        attachments: Vec<SentAttachment>,
     },
     UserRead {
         id: String,
@@ -139,6 +139,38 @@ pub struct ModelChoice {
     pub effort_levels: Vec<String>,
 }
 
+/// What the conversation shows of an attachment. Images stay out of the history: the host keeps
+/// them per session, and the event names one by its index.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SentAttachment {
+    pub name: String,
+    /// The image as a data URL, until the host keeps it.
+    #[serde(skip)]
+    pub data_url: Option<String>,
+    pub image: Option<usize>,
+}
+
+impl SentAttachment {
+    pub fn named(name: impl Into<String>) -> Self {
+        SentAttachment {
+            name: name.into(),
+            data_url: None,
+            image: None,
+        }
+    }
+
+    pub fn image(name: impl Into<String>, data_url: String) -> Self {
+        SentAttachment {
+            data_url: Some(data_url),
+            ..SentAttachment::named(name)
+        }
+    }
+}
+
+pub(crate) fn data_url(media_type: &str, data: &str) -> String {
+    format!("data:{media_type};base64,{data}")
+}
+
 /// Something the user attaches to a message. worki reads files itself and sends their content,
 /// so attachments work even where the agent can't reach the file.
 #[derive(Debug, Clone, PartialEq)]
@@ -174,9 +206,14 @@ impl Attachment {
         })
     }
 
-    pub fn name(&self) -> &str {
+    pub fn sent(&self) -> SentAttachment {
         match self {
-            Attachment::Text { name, .. } | Attachment::Image { name, .. } => name,
+            Attachment::Text { name, .. } => SentAttachment::named(name),
+            Attachment::Image {
+                name,
+                media_type,
+                data,
+            } => SentAttachment::image(name, data_url(media_type, data)),
         }
     }
 

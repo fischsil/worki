@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use super::{
-    Attachment, BackgroundTask, ChatEvent, ChatProtocol, ChatSetting, ModelChoice,
-    PermissionAnswer, Question, StateUpdate,
+    data_url, Attachment, BackgroundTask, ChatEvent, ChatProtocol, ChatSetting, ModelChoice,
+    PermissionAnswer, Question, SentAttachment, StateUpdate,
 };
 
 /// Claude Code's permission modes worki offers. Skipping all prompts isn't among them: Claude
@@ -659,14 +659,24 @@ fn past_user_message(content: &Value) -> Vec<ChatEvent> {
                 is_error: block["is_error"].as_bool().unwrap_or(false),
                 parent: None,
             }),
-            Some("image") => attachments.push("image".to_owned()),
+            Some("image") => {
+                let source = &block["source"];
+                attachments.push(
+                    match (source["media_type"].as_str(), source["data"].as_str()) {
+                        (Some(media_type), Some(data)) => {
+                            SentAttachment::image("image", data_url(media_type, data))
+                        }
+                        _ => SentAttachment::named("image"),
+                    },
+                );
+            }
             Some("text") => {
                 let t = block["text"].as_str().unwrap_or_default();
                 if let Some(name) = t
                     .strip_prefix("<attached-file name=\"")
                     .and_then(|rest| rest.split_once('"'))
                 {
-                    attachments.push(name.0.to_owned());
+                    attachments.push(SentAttachment::named(name.0));
                 } else if t.starts_with("[Request interrupted") {
                     events.extend(notice(t, &None));
                 } else if !t.starts_with("<system-reminder>")
@@ -1142,7 +1152,7 @@ mod tests {
         let mut p = ClaudeProtocol::new("s");
         let transcript = [
             r#"{"type":"session-owner","sessionId":"s"}"#,
-            r#"{"type":"user","message":{"role":"user","content":[{"type":"image","source":{}},{"type":"text","text":"<attached-file name=\"notes.md\">\nx\n</attached-file>"},{"type":"text","text":"Fix it"}]},"isSidechain":false}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBO"}},{"type":"text","text":"<attached-file name=\"notes.md\">\nx\n</attached-file>"},{"type":"text","text":"Fix it"}]},"isSidechain":false}"#,
             r#"{"type":"user","message":{"role":"user","content":"<system-reminder>hidden</system-reminder>"},"isMeta":true}"#,
             r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"thinking","thinking":""}]}}"#,
             r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/w/a"}}]}}"#,
@@ -1160,7 +1170,10 @@ mod tests {
                 ChatEvent::User {
                     id: None,
                     text: "Fix it".into(),
-                    attachments: vec!["image".into(), "notes.md".into()],
+                    attachments: vec![
+                        SentAttachment::image("image", "data:image/png;base64,iVBO".into()),
+                        SentAttachment::named("notes.md"),
+                    ],
                 },
                 ChatEvent::ToolCall {
                     id: "t1".into(),

@@ -7,6 +7,7 @@ import {
   type ChatEvent,
   type ChatQuestion,
   type ModelChoice,
+  type SentAttachment,
 } from "./api";
 
 export type ChatItem =
@@ -14,7 +15,7 @@ export type ChatItem =
       kind: "user";
       key: string;
       text: string;
-      attachments: string[];
+      attachments: SentAttachment[];
       /** Sent while the agent was busy and not read by it yet. */
       queued: boolean;
     }

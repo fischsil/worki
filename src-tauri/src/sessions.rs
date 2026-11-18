@@ -1133,6 +1133,11 @@ pub fn background_chat_commands(state: State<'_, AppState>, id: String) -> CmdRe
 }
 
 #[tauri::command]
+pub fn chat_image(state: State<'_, AppState>, id: String, image: usize) -> CmdResult<String> {
+    state.sessions.chat_image(&id, image).map_err(err)
+}
+
+#[tauri::command]
 pub fn interrupt_chat(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     state.sessions.interrupt(&id).map_err(err)
 }

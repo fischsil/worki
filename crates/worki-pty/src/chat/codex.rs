@@ -8,8 +8,8 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
-    Attachment, ChatEvent, ChatProtocol, ChatSetting, ModelChoice, PermissionAnswer, Question,
-    QuestionOption, StateUpdate,
+    data_url, Attachment, ChatEvent, ChatProtocol, ChatSetting, ModelChoice, PermissionAnswer,
+    Question, QuestionOption, SentAttachment, StateUpdate,
 };
 use crate::{AgentState, ModelUsage};
 
@@ -562,7 +562,7 @@ impl ChatProtocol for CodexProtocol {
             .map(|a| match a {
                 Attachment::Image {
                     media_type, data, ..
-                } => json!({ "type": "image", "url": format!("data:{media_type};base64,{data}") }),
+                } => json!({ "type": "image", "url": data_url(media_type, data) }),
                 Attachment::Text { name, text } => json!({
                     "type": "text",
                     "text": format!("<attached-file name=\"{name}\">\n{text}\n</attached-file>"),
@@ -843,7 +843,13 @@ fn past_turns(turns: &Value) -> Vec<ChatEvent> {
             let attachments = content
                 .iter()
                 .filter(|c| c["type"] != "text")
-                .map(|c| c["type"].as_str().unwrap_or("attachment").to_owned())
+                .map(|c| {
+                    let name = c["type"].as_str().unwrap_or("attachment");
+                    match c["url"].as_str() {
+                        Some(url) => SentAttachment::image(name, url.to_owned()),
+                        None => SentAttachment::named(name),
+                    }
+                })
                 .collect();
             events.push(ChatEvent::User {
                 id: None,

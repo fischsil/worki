@@ -3,6 +3,17 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { ProjectEnvironment } from "../lib/api";
 
 const scene = new URLSearchParams(location.search).get("scene") ?? "main";
+
+const EMPTY_CART = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" font-family="-apple-system, sans-serif">
+  <rect width="480" height="270" fill="#f6f6f7"/>
+  <rect x="120" y="40" width="240" height="190" rx="12" fill="#fff" stroke="#e2e2e6"/>
+  <text x="144" y="78" font-size="16" font-weight="600" fill="#1d1d20">Order summary</text>
+  <text x="144" y="118" font-size="13" fill="#6b6b73">Subtotal</text><text x="336" y="118" font-size="13" fill="#1d1d20" text-anchor="end">$0.00</text>
+  <text x="144" y="146" font-size="13" fill="#6b6b73">Shipping</text><text x="336" y="146" font-size="13" fill="#1d1d20" text-anchor="end">$0.00</text>
+  <line x1="144" y1="164" x2="336" y2="164" stroke="#e2e2e6"/>
+  <text x="144" y="194" font-size="14" font-weight="600" fill="#1d1d20">Total</text><text x="336" y="194" font-size="14" font-weight="600" fill="#d93025" text-anchor="end">$0.00</text>
+</svg>`)}`;
+const chatImages = [EMPTY_CART];
 const ROOT = "/Users/dev/worki/worktrees";
 const now = Math.floor(Date.now() / 1000);
 
@@ -248,7 +259,7 @@ const chatEvents: object[] = [
   {
     type: "user",
     text: "The empty cart shows a total of $0.00 with shipping. Hide the summary when the cart is empty and add a test.",
-    attachments: ["empty-cart.png"],
+    attachments: [{ name: "empty-cart.png", image: 0 }],
   },
   { type: "text", id: "m1:0", parent: null, text: "I'll look at how the summary handles an empty cart first." },
   { type: "toolCall", id: "t1", name: "Read", parent: null, input: { file_path: `${checkout}/src/checkout/Summary.tsx` } },
@@ -695,10 +706,15 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       }
       return 1;
     }
+    case "chat_image":
+      return chatImages[args.image];
     case "send_chat_message": {
       const id = `m${++sentMessages}`;
       sendChat(
-        { type: "user", id, text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) },
+        { type: "user", id, text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string; mediaType?: string; data?: string }) => ({
+          name: a.name ?? a.path?.split("/").pop(),
+          image: a.data ? chatImages.push(`data:${a.mediaType};base64,${a.data}`) - 1 : null,
+        })) },
         { type: "userRead", id },
       );
       const s = sessions.find((s) => s.id === args.id);
