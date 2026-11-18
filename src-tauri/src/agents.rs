@@ -4,11 +4,13 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use worki_core::agents;
 use worki_core::{secrets, Isolation, LogLine};
 use worki_isolation::{host_which, Backend, LaunchRequest};
+use worki_pty::{Captured, Exit};
 
+use crate::accounts::Logins;
 use crate::sessions::events;
 use crate::{blocking, err, AppState, CmdResult};
 
@@ -156,10 +158,10 @@ pub async fn sign_in_agent(
         )?;
         match (agents::find_claude_token(&output), code) {
             (Some(token), _) => Ok(token),
-            (None, None) => anyhow::bail!("Timed out waiting for the browser sign-in."),
-            (None, Some(code)) => {
+            (None, Exit::Code(code)) => {
                 anyhow::bail!("`claude setup-token` exited ({code}) without printing a token.")
             }
+            (None, _) => anyhow::bail!("Timed out waiting for the browser sign-in."),
         }
     })
     .await?;
@@ -182,6 +184,8 @@ pub async fn sign_in_agent(
 #[serde(rename_all = "camelCase")]
 struct AgentSignIn {
     worktree_path: PathBuf,
+    /// Cancels the sign-in with `cancel_login`.
+    id: String,
     agent: String,
     url: String,
     code: String,
@@ -194,8 +198,8 @@ struct SignInEnded {
 }
 
 /// Signs Codex in where `worktree`'s agents run, when it isn't yet: Codex's device-code sign-in,
-/// whose link and code the worktree shows until it's approved in the browser. The login stays in
-/// that environment.
+/// whose link and code the worktree shows until it's approved in the browser or cancelled. The
+/// login stays in that environment.
 pub async fn sign_in_codex(
     state: &AppState,
     instance: Arc<dyn Backend>,
@@ -216,6 +220,7 @@ pub async fn sign_in_codex(
     );
     let app = state.app.clone();
     let (worktree_path, agent) = (worktree.to_owned(), agent.to_owned());
+    let id = format!("codex:{}", worktree.display());
     blocking(move || {
         let mut status = instance.launch(&status)?.command();
         if status
@@ -226,35 +231,42 @@ pub async fn sign_in_codex(
         {
             return Ok(());
         }
+        let logins = app.state::<Logins>();
+        let (_running, input) = logins.start(id.clone());
         let launch = instance.launch(&sign_in)?;
         let mut output = String::new();
         let mut shown = false;
-        let code = worki_pty::run_captured(
-            &launch.program,
-            &launch.args,
-            &launch.cwd,
-            120,
-            Duration::from_secs(15 * 60),
-            |bytes| {
-                output.push_str(&agents::strip_ansi(&String::from_utf8_lossy(bytes)));
-                if let (false, Some((url, code))) = (shown, device_code(&output)) {
-                    shown = true;
-                    let event = AgentSignIn {
-                        worktree_path: worktree_path.clone(),
-                        agent: agent.clone(),
-                        url,
-                        code,
-                    };
-                    app.emit(events::AGENT_SIGN_IN, event).ok();
-                }
-            },
-        );
+        let spec = Captured {
+            program: &launch.program,
+            args: &launch.args,
+            env: &[],
+            cwd: &launch.cwd,
+            cols: 120,
+            timeout: Duration::from_secs(15 * 60),
+        };
+        let code = worki_pty::run_interactive(spec, Some(input), |bytes| {
+            output.push_str(&agents::strip_ansi(&String::from_utf8_lossy(bytes)));
+            if let (false, Some((url, code))) = (shown, device_code(&output)) {
+                shown = true;
+                let event = AgentSignIn {
+                    worktree_path: worktree_path.clone(),
+                    id: id.clone(),
+                    agent: agent.clone(),
+                    url,
+                    code,
+                };
+                app.emit(events::AGENT_SIGN_IN, event).ok();
+            }
+        });
         app.emit(events::AGENT_SIGNED_IN, SignInEnded { worktree_path })
             .ok();
         match code? {
-            Some(0) => Ok(()),
-            None => anyhow::bail!("Codex sign-in expired; start Codex again for a new code."),
-            Some(_) => anyhow::bail!("Codex sign-in didn't finish: {}", output.trim()),
+            Exit::Code(0) => Ok(()),
+            Exit::Killed => anyhow::bail!("Codex sign-in was cancelled."),
+            Exit::TimedOut => {
+                anyhow::bail!("Codex sign-in expired; start Codex again for a new code.")
+            }
+            Exit::Code(_) => anyhow::bail!("Codex sign-in didn't finish: {}", output.trim()),
         }
     })
     .await

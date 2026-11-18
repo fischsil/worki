@@ -9,20 +9,58 @@ use tauri::ipc::Channel;
 use tauri::State;
 use worki_core::{agents, paths, ClaudeAccount};
 use worki_isolation::account_launch;
-use worki_pty::{Captured, PtyInput};
+use worki_pty::{Captured, Exit, PtyInput};
 
 use crate::activity::{track, Scope};
 use crate::{blocking, err, AppState, CmdResult};
 
-/// Sign-ins in progress, by account id: where the code the user pastes goes. Each has a number,
-/// so a sign-in that ends doesn't drop a newer one of the same account.
+/// Sign-ins in progress, by id (an account's, or `codex:<worktree>` for Codex's in a worktree):
+/// where the code the user pastes goes, and how they're cancelled. Each has a number, so a
+/// sign-in that ends doesn't drop a newer one of the same id.
 #[derive(Default)]
 pub struct Logins {
     running: Mutex<HashMap<String, (u64, mpsc::Sender<PtyInput>)>>,
     started: AtomicU64,
 }
 
+pub struct Running<'a> {
+    logins: &'a Logins,
+    key: String,
+    number: u64,
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.logins
+            .running
+            .lock()
+            .unwrap()
+            .retain(|key, (n, _)| *key != self.key || *n != self.number);
+    }
+}
+
 impl Logins {
+    /// Registers a sign-in as `key` until the returned guard drops, stopping an older one of the
+    /// same key. Also returns where its input arrives.
+    pub fn start(&self, key: String) -> (Running<'_>, mpsc::Receiver<PtyInput>) {
+        let (input, received) = mpsc::channel();
+        let number = self.started.fetch_add(1, Ordering::SeqCst);
+        if let Some((_, older)) = self
+            .running
+            .lock()
+            .unwrap()
+            .insert(key.clone(), (number, input))
+        {
+            older.send(PtyInput::Kill).ok();
+        }
+        let running = Running {
+            logins: self,
+            key,
+            number,
+        };
+        (running, received)
+    }
+
     fn input(&self, id: &str) -> Option<mpsc::Sender<PtyInput>> {
         self.running
             .lock()
@@ -150,17 +188,8 @@ async fn run_sign_in(
     on_event: Channel<LoginEvent>,
     hide: fn(&str) -> bool,
 ) -> CmdResult<String> {
-    let (input, received) = mpsc::channel();
-    let number = logins.started.fetch_add(1, Ordering::SeqCst);
-    if let Some((_, older)) = logins
-        .running
-        .lock()
-        .unwrap()
-        .insert(key.clone(), (number, input))
-    {
-        older.send(PtyInput::Kill).ok();
-    }
-    let result = blocking(move || {
+    let (_running, received) = logins.start(key);
+    blocking(move || {
         let run = account_launch(&config, login.as_deref(), command, true)?;
         let launch = &run.launch;
         let mut output = String::new();
@@ -191,18 +220,12 @@ async fn run_sign_in(
             }
         });
         match code? {
-            Some(0) => Ok(output),
-            None => anyhow::bail!("The sign-in was stopped."),
-            Some(code) => anyhow::bail!("`{command}` exited ({code}) without signing in."),
+            Exit::Code(0) => Ok(output),
+            Exit::Code(code) => anyhow::bail!("`{command}` exited ({code}) without signing in."),
+            Exit::Killed | Exit::TimedOut => anyhow::bail!("The sign-in was stopped."),
         }
     })
-    .await;
-    logins
-        .running
-        .lock()
-        .unwrap()
-        .retain(|running, (n, _)| *running != key || *n != number);
-    result
+    .await
 }
 
 /// Types the code the sign-in page showed into the waiting `claude auth login`.

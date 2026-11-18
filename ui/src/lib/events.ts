@@ -16,7 +16,7 @@ export interface AppEvents {
   /** An agent was installed into a worktree's container or sandbox. */
   "agent-installed": { projectId: string; worktreePath: string; agent: string };
   /** An agent waits for a device-code sign-in before it starts in a worktree. */
-  "agent-sign-in": { worktreePath: string; agent: string; url: string; code: string };
+  "agent-sign-in": { worktreePath: string; id: string; agent: string; url: string; code: string };
   "agent-signed-in": { worktreePath: string };
 }
 

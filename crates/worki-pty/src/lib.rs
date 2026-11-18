@@ -443,8 +443,17 @@ fn spawn_ticker(sessions: Weak<SessionMap>, on_change: OnChange) {
         .ok();
 }
 
+/// How a [`run_captured`] program ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Exit {
+    Code(u32),
+    TimedOut,
+    /// By [`PtyInput::Kill`].
+    Killed,
+}
+
 /// Runs a program in a throwaway PTY (for tools that insist on a terminal), feeding all output to
-/// `on_output`. Returns the exit code, or `None` if it was killed after `timeout`.
+/// `on_output`, and ends it after `timeout`.
 pub fn run_captured(
     program: &str,
     args: &[String],
@@ -452,7 +461,7 @@ pub fn run_captured(
     cols: u16,
     timeout: Duration,
     on_output: impl FnMut(&[u8]),
-) -> Result<Option<u32>> {
+) -> Result<Exit> {
     let spec = Captured {
         program,
         args,
@@ -487,7 +496,7 @@ pub fn run_interactive(
     spec: Captured,
     input: Option<mpsc::Receiver<PtyInput>>,
     mut on_output: impl FnMut(&[u8]),
-) -> Result<Option<u32>> {
+) -> Result<Exit> {
     let pair = native_pty_system().openpty(PtySize {
         rows: 50,
         cols: spec.cols,
@@ -553,12 +562,16 @@ pub fn run_interactive(
             Err(RecvTimeoutError::Timeout) => {
                 child.kill().ok();
                 child.wait().ok();
-                return Ok(None);
+                return Ok(Exit::TimedOut);
             }
         }
     }
     let code = child.wait()?.exit_code();
-    Ok((!killed.load(Ordering::SeqCst)).then_some(code))
+    Ok(if killed.load(Ordering::SeqCst) {
+        Exit::Killed
+    } else {
+        Exit::Code(code)
+    })
 }
 
 /// Appends to the ring buffer; when trimming, cuts at the next newline so replay doesn't start
@@ -666,7 +679,7 @@ mod tests {
             |b| out.extend_from_slice(b),
         )
         .unwrap();
-        assert_eq!(code, Some(4));
+        assert_eq!(code, Exit::Code(4));
         assert!(String::from_utf8_lossy(&out).contains("tok-123"));
     }
 
