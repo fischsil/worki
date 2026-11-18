@@ -222,7 +222,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
       <div className="relative min-h-0 flex-1">
         {active &&
           (active.kind === "chat" ? (
-            <ChatView key={`${active.id}-${active.createdAt}`} session={active} />
+            <ChatView key={`${active.id}-${active.createdAt}`} session={active} projectId={project.id} />
           ) : (
             <TerminalView key={`${active.id}-${active.createdAt}`} sessionId={active.id} active />
           ))}

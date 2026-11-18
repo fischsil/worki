@@ -67,6 +67,8 @@ interface UiState {
   panelWidths: Record<Panel, number>;
   theme: Theme;
   rounded: boolean;
+  /** The permission mode last picked in a chat, per project and agent profile; new chats start in it. */
+  permissionModes: Record<string, Record<string, string>>;
   terminalFontSize: number;
   panelFontSize: number;
   diffFontSize: number;
@@ -94,6 +96,7 @@ interface UiState {
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
   setRounded: (rounded: boolean) => void;
+  setPermissionMode: (projectId: string, profileId: string, mode: string) => void;
   setTerminalFontSize: (size: number) => void;
   setPanelFontSize: (size: number) => void;
   setDiffFontSize: (size: number) => void;
@@ -129,6 +132,7 @@ export const useUi = create<UiState>()(
       },
       theme: "system",
       rounded: false,
+      permissionModes: {},
       terminalFontSize: 13,
       panelFontSize: 13,
       diffFontSize: 13,
@@ -163,6 +167,10 @@ export const useUi = create<UiState>()(
       },
       setTheme: (theme) => set({ theme }),
       setRounded: (rounded) => set({ rounded }),
+      setPermissionMode: (projectId, profileId, mode) =>
+        set((s) => ({
+          permissionModes: { ...s.permissionModes, [projectId]: { ...s.permissionModes[projectId], [profileId]: mode } },
+        })),
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
       setPanelFontSize: (panelFontSize) => set({ panelFontSize }),
       setDiffFontSize: (diffFontSize) => set({ diffFontSize }),
@@ -187,6 +195,7 @@ export const useUi = create<UiState>()(
         panelWidths,
         theme,
         rounded,
+        permissionModes,
         terminalFontSize,
         panelFontSize,
         diffFontSize,
@@ -209,6 +218,7 @@ export const useUi = create<UiState>()(
         panelWidths,
         theme,
         rounded,
+        permissionModes,
         terminalFontSize,
         panelFontSize,
         diffFontSize,

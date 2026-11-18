@@ -64,6 +64,7 @@ import {
 } from "../lib/api";
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
 import { keys } from "../lib/queries";
+import { useUi } from "../lib/store";
 import { elapsed, useNow } from "../lib/time";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
@@ -74,7 +75,7 @@ type Permission = Extract<ChatItem, { kind: "permission" }>;
 type Tool = Extract<ChatItem, { kind: "tool" }>;
 
 /** An agent session shown as a conversation instead of a terminal. */
-export function ChatView({ session }: { session: SessionInfo }) {
+export function ChatView({ session, projectId }: { session: SessionInfo; projectId: string }) {
   const chat = useChat(session.id);
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -115,7 +116,7 @@ export function ChatView({ session }: { session: SessionInfo }) {
           {chat.exited?.error && <ErrorText>{chat.exited.error}</ErrorText>}
         </div>
       </div>
-      {running && <Composer session={session} chat={chat} onSend={() => (pinned.current = true)} />}
+      {running && <Composer session={session} projectId={projectId} chat={chat} onSend={() => (pinned.current = true)} />}
     </div>
   );
 }
@@ -703,7 +704,17 @@ function readImage(file: File): Promise<Pending> {
   });
 }
 
-function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat; onSend: () => void }) {
+function Composer({
+  session,
+  projectId,
+  chat,
+  onSend,
+}: {
+  session: SessionInfo;
+  projectId: string;
+  chat: Chat;
+  onSend: () => void;
+}) {
   const [text, setText] = useState("");
   const [attached, setAttached] = useState<Pending[]>([]);
   const [sending, setSending] = useState(false);
@@ -890,7 +901,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
           </div>
         </div>
         </div>
-        <Settings session={session} chat={chat} onError={setError} />
+        <Settings session={session} projectId={projectId} chat={chat} onError={setError} />
         <ErrorText>{error}</ErrorText>
       </div>
     </div>
@@ -901,9 +912,33 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
 const lineBox = "box-content flex h-[1lh] shrink-0 items-center border border-transparent py-2 text-xs fs-chat";
 
 /** The model, permission mode and effort the agent runs with, switchable mid-conversation. */
-function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat; onError: (e: string | null) => void }) {
+/** Chats the remembered permission mode was applied to; only once, so the agent can still change it. */
+const startedInRememberedMode = new Set<string>();
+
+function Settings({
+  session,
+  projectId,
+  chat,
+  onError,
+}: {
+  session: SessionInfo;
+  projectId: string;
+  chat: Chat;
+  onError: (e: string | null) => void;
+}) {
   const [pickedModel, setPickedModel] = useState<string | null>(null);
   const { settings, options } = chat;
+  const profileId = session.profileId;
+  const remembered = useUi((s) => (profileId ? s.permissionModes[projectId]?.[profileId] : undefined));
+  const setPermissionMode = useUi((s) => s.setPermissionMode);
+  const mode = settings?.permissionMode;
+  const modes = options?.permissionModes;
+  useEffect(() => {
+    if (!mode || !modes || startedInRememberedMode.has(session.id)) return;
+    startedInRememberedMode.add(session.id);
+    if (remembered && remembered !== mode && modes.includes(remembered))
+      api.changeChatSetting(session.id, { kind: "permissionMode", value: remembered }).catch((e) => onError(errorMessage(e)));
+  }, [session.id, mode, modes, remembered, onError]);
   if (!settings || !options) return null;
 
   const models = options.models;
@@ -923,6 +958,7 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
   const effort = settings.effort && current?.effortLevels.includes(settings.effort) ? settings.effort : "";
   const change = (setting: ChatSetting) => {
     onError(null);
+    if (setting.kind === "permissionMode" && profileId) setPermissionMode(projectId, profileId, setting.value);
     api.changeChatSetting(session.id, setting).catch((e) => onError(errorMessage(e)));
   };
   return (
