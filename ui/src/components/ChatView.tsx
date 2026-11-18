@@ -30,6 +30,7 @@ import {
   Clock,
   LoaderCircle,
   MessageCircleQuestion,
+  Mic,
   Paperclip,
   ShieldQuestion,
   Smartphone,
@@ -54,6 +55,7 @@ import {
   type AgentStatusKind,
   api,
   type ChatAttachment,
+  type ChatCommand,
   type ChatQuestion,
   type ChatSetting,
   errorMessage,
@@ -63,6 +65,7 @@ import {
   type SessionInfo,
 } from "../lib/api";
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
+import { useDictation } from "../lib/dictation";
 import { keys } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { elapsed, useNow } from "../lib/time";
@@ -670,6 +673,57 @@ function QuestionCard({ request, session }: { request: Permission; session: Sess
   );
 }
 
+function matchingCommands(commands: ChatCommand[], text: string): ChatCommand[] {
+  if (!/^[/$]\S*$/.test(text)) return [];
+  const query = text.toLowerCase();
+  return commands
+    .filter((c) => c.trigger[0] === text[0] && c.trigger.toLowerCase().includes(query.slice(1)))
+    .sort((a, b) => Number(!a.trigger.toLowerCase().startsWith(query)) - Number(!b.trigger.toLowerCase().startsWith(query)));
+}
+
+function CommandList({
+  commands,
+  picked,
+  onPick,
+  onChoose,
+}: {
+  commands: ChatCommand[];
+  picked: number;
+  onPick: (i: number) => void;
+  onChoose: (c: ChatCommand) => void;
+}) {
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    list.current?.children[picked]?.scrollIntoView({ block: "nearest" });
+  }, [picked]);
+  return (
+    <div
+      ref={list}
+      data-overlay
+      role="listbox"
+      className="absolute right-0 bottom-full left-0 z-20 mb-1.5 max-h-72 overflow-y-auto rounded-lg border border-line bg-elevated p-1 shadow-lg"
+    >
+      {commands.map((c, i) => (
+        <div
+          key={c.trigger}
+          role="option"
+          aria-selected={i === picked}
+          onMouseEnter={() => onPick(i)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onChoose(c);
+          }}
+          className={clsx("flex cursor-default items-baseline gap-2 rounded-md px-2 py-1 fs-chat-xs", i === picked && "bg-selected")}
+        >
+          <span className="shrink-0 font-mono text-fg">{c.trigger}</span>
+          {c.argumentHint && <span className="shrink-0 font-mono text-faint">{c.argumentHint}</span>}
+          {c.description && <span className="min-w-0 truncate text-muted">{c.description}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface Pending {
   id: number;
   name: string;
@@ -724,9 +778,20 @@ function Composer({
   const ready = !!text.trim() || attached.length > 0;
   const busy = session.activity !== "idle";
   const suggestion = !busy && !text && attached.length === 0 ? chat.suggestion : null;
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [picked, setPicked] = useState(0);
+  const commands = text !== dismissed ? matchingCommands(chat.commands, text) : [];
+  const highlighted = Math.min(picked, commands.length - 1);
+  const choose = (command: ChatCommand) => {
+    setText(`${command.trigger} `);
+    input.current?.focus();
+  };
+
+  const dictation = useDictation(text, setText, setError);
 
   async function send() {
     if (!ready || sending) return;
+    dictation.cancel();
     setError(null);
     setSending(true);
     try {
@@ -817,10 +882,13 @@ function Composer({
         {hasJobs && <BackgroundJobs tasks={chat.background} onStop={stopJobs} />}
         <div
           className={clsx(
-            "flex flex-col gap-1.5 rounded-lg border bg-panel px-2 py-1.5 focus-within:border-accent",
+            "relative flex flex-col gap-1.5 rounded-lg border bg-panel px-2 py-1.5 focus-within:border-accent",
             dropping ? "border-accent bg-accent/10" : "border-line",
           )}
         >
+          {commands.length > 0 && (
+            <CommandList commands={commands} picked={highlighted} onPick={setPicked} onChoose={choose} />
+          )}
           {attached.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
               {attached.map((a) => (
@@ -847,15 +915,50 @@ function Composer({
             >
               <Paperclip size={14} />
             </button>
+            <button
+              onClick={() => {
+                dictation.toggle();
+                input.current?.focus();
+              }}
+              title={dictation.listening ? "Stop dictating" : "Dictate"}
+              aria-pressed={dictation.listening}
+              className={clsx(
+                "flex size-7 shrink-0 items-center justify-center rounded-md",
+                dictation.listening ? "animate-pulse bg-red-500/15 text-red-500" : "text-muted hover:bg-hover hover:text-fg",
+              )}
+            >
+              <Mic size={14} />
+            </button>
           </div>
           <Textarea
             ref={input}
             rows={1}
             maxRows={10}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              setPicked(0);
+            }}
             onPaste={paste}
             onKeyDown={(e) => {
+              if (commands.length > 0 && !e.nativeEvent.isComposing) {
+                const move = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+                if (move) {
+                  e.preventDefault();
+                  setPicked((highlighted + move + commands.length) % commands.length);
+                  return;
+                }
+                const command = commands[highlighted];
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && command.trigger !== text)) {
+                  e.preventDefault();
+                  choose(command);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  setDismissed(text);
+                  return;
+                }
+              }
               if (suggestion && (e.key === "Tab" || e.key === "ArrowRight") && !e.shiftKey) {
                 e.preventDefault();
                 setText(suggestion);

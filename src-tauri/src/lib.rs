@@ -3,6 +3,7 @@ mod activity;
 mod agents;
 mod awake;
 mod commands;
+mod dictation;
 mod isolation;
 mod openers;
 mod sessions;
@@ -232,6 +233,10 @@ pub fn run() {
             sessions::send_chat_message,
             sessions::answer_chat_permission,
             sessions::chat_image,
+            dictation::dictation_access,
+            dictation::start_dictation,
+            dictation::stop_dictation,
+            dictation::cancel_dictation,
             sessions::interrupt_chat,
             sessions::background_chat_commands,
             sessions::stop_chat_tasks,

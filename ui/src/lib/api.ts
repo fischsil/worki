@@ -388,6 +388,7 @@ export type AgentStatusKind = "requesting" | "thinking" | "writing" | "tool" | "
 export type ChatEvent = (
   | { type: "session"; model: string | null; permissionMode: string | null; effort: string | null }
   | { type: "options"; models: ModelChoice[]; permissionModes: string[] }
+  | { type: "commands"; commands: ChatCommand[] }
   | { type: "user"; id: string | null; text: string; attachments: SentAttachment[] }
   | { type: "userRead"; id: string }
   | { type: "textDelta"; id: string; text: string; parent: string | null }
@@ -406,6 +407,14 @@ export type ChatEvent = (
   /** When worki recorded the event, in Unix milliseconds. */
   at?: number;
 };
+
+export type DictationEvent = { type: "text"; text: string; done: boolean } | { type: "failed"; message: string };
+
+export interface ChatCommand {
+  trigger: string;
+  description: string | null;
+  argumentHint: string | null;
+}
 
 export interface ModelChoice {
   /** What to switch to, such as an alias like `opus`. */
@@ -597,6 +606,14 @@ export const api = {
     channel.onmessage = (data) => onData(new Uint8Array(data));
     return invoke<number>("attach_session", { id, onData: channel });
   },
+  dictationAccess: () => invoke<boolean>("dictation_access"),
+  startDictation: (onEvent: (event: DictationEvent) => void) => {
+    const channel = new Channel<DictationEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("start_dictation", { onEvent: channel });
+  },
+  stopDictation: () => invoke<void>("stop_dictation"),
+  cancelDictation: () => invoke<void>("cancel_dictation"),
   detachSession: (id: string, sinkId: number) => invoke<void>("detach_session", { id, sinkId }),
   writeSession: (id: string, data: string) => invoke<void>("write_session", { id, data }),
   resizeSession: (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows }),

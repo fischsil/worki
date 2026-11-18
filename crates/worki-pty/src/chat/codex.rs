@@ -8,8 +8,8 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
-    data_url, Attachment, ChatEvent, ChatProtocol, ChatSetting, ModelChoice, PermissionAnswer,
-    Question, QuestionOption, SentAttachment, StateUpdate,
+    data_url, non_empty, Attachment, ChatCommand, ChatEvent, ChatProtocol, ChatSetting,
+    ModelChoice, PermissionAnswer, Question, QuestionOption, SentAttachment, StateUpdate,
 };
 use crate::{AgentState, ModelUsage};
 
@@ -31,6 +31,7 @@ enum Asked {
     Initialize,
     Thread,
     Models,
+    Skills,
     Account,
     Turn,
     Other,
@@ -55,6 +56,8 @@ pub struct CodexProtocol {
     effort: Option<String>,
     approval_policy: Option<String>,
     model_names: HashMap<String, String>,
+    /// Paths of the skills Codex offers, by name.
+    skills: HashMap<String, String>,
     replies: Vec<String>,
     events: Vec<ChatEvent>,
     state: AgentState,
@@ -92,6 +95,7 @@ impl CodexProtocol {
             effort: None,
             approval_policy: None,
             model_names: HashMap::new(),
+            skills: HashMap::new(),
             replies: Vec::new(),
             events: Vec::new(),
             state: AgentState::default(),
@@ -178,7 +182,11 @@ impl CodexProtocol {
                 Asked::Thread => vec![ChatEvent::Notice {
                     text: format!("Codex couldn't start the conversation: {error}"),
                 }],
-                Asked::Initialize | Asked::Models | Asked::Account | Asked::Other => Vec::new(),
+                Asked::Initialize
+                | Asked::Models
+                | Asked::Skills
+                | Asked::Account
+                | Asked::Other => Vec::new(),
             };
         }
         match kind {
@@ -244,10 +252,7 @@ impl CodexProtocol {
                         value: m["id"].as_str().unwrap_or_default().to_owned(),
                         model: m["model"].as_str().map(str::to_owned),
                         label: m["displayName"].as_str().unwrap_or_default().to_owned(),
-                        description: m["description"]
-                            .as_str()
-                            .filter(|d| !d.is_empty())
-                            .map(str::to_owned),
+                        description: non_empty(&m["description"]),
                         effort_levels: m["supportedReasoningEfforts"]
                             .as_array()
                             .into_iter()
@@ -265,6 +270,26 @@ impl CodexProtocol {
                     models,
                     permission_modes: APPROVAL_POLICIES.map(String::from).to_vec(),
                 }]
+            }
+            Asked::Skills => {
+                let commands = result["data"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|entry| entry["skills"].as_array().into_iter().flatten())
+                    .filter(|s| s["enabled"] != false)
+                    .filter_map(|s| Some((s["name"].as_str()?, s["path"].as_str()?, s)))
+                    .filter(|(name, path, _)| {
+                        self.skills.insert((*name).into(), (*path).into()).is_none()
+                    })
+                    .map(|(name, _, skill)| ChatCommand {
+                        trigger: format!("${name}"),
+                        description: non_empty(&skill["shortDescription"])
+                            .or_else(|| non_empty(&skill["description"])),
+                        argument_hint: None,
+                    })
+                    .collect();
+                vec![ChatEvent::Commands { commands }]
             }
             Asked::Turn => {
                 if let Some(turn) = result["turn"]["id"].as_str() {
@@ -552,8 +577,9 @@ impl ChatProtocol for CodexProtocol {
             None => self.thread_start(),
         };
         let models = self.request(Asked::Models, "model/list", json!({}));
+        let skills = self.request(Asked::Skills, "skills/list", json!({}));
         let account = self.request(Asked::Account, "account/read", json!({}));
-        vec![initialize, initialized, thread, models, account]
+        vec![initialize, initialized, thread, models, skills, account]
     }
 
     fn message(&mut self, id: &str, text: &str, attachments: &[Attachment]) -> Vec<String> {
@@ -570,6 +596,11 @@ impl ChatProtocol for CodexProtocol {
                 }),
             })
             .collect();
+        for name in text.split_whitespace().filter_map(|w| w.strip_prefix('$')) {
+            if let Some(path) = self.skills.get(name) {
+                input.push(json!({ "type": "skill", "name": name, "path": path }));
+            }
+        }
         if !text.trim().is_empty() {
             input.push(json!({ "type": "text", "text": text, "text_elements": [] }));
         }
@@ -910,13 +941,37 @@ mod tests {
     fn reads_the_signed_in_account() {
         let mut p = protocol();
         let start = sent(&p.start());
-        assert_eq!(start[4]["method"], "account/read");
+        assert_eq!(start[5]["method"], "account/read");
         parse_all(&mut p, TURN);
-        p.parse(r#"{"id": 4, "result": {"account": {"type": "chatgpt", "email": "me@example.com", "planType": "plus", "workspaceName": null}, "requiresOpenaiAuth": true}}"#);
+        p.parse(r#"{"id": 5, "result": {"account": {"type": "chatgpt", "email": "me@example.com", "planType": "plus", "workspaceName": null}, "requiresOpenaiAuth": true}}"#);
         let account = p.take_state().unwrap().agent.unwrap().account.unwrap();
         assert_eq!(account.email.as_deref(), Some("me@example.com"));
         assert_eq!(account.plan.as_deref(), Some("plus"));
         assert_eq!(account.organization, None);
+    }
+
+    #[test]
+    fn offers_skills_and_sends_the_ones_a_message_names() {
+        let mut p = started();
+        let commands = p.parse(&json!({ "id": 4, "result": { "data": [{ "cwd": "/w", "errors": [], "skills": [
+            { "name": "deploy", "description": "Deploys it", "enabled": true, "path": "/s/deploy/SKILL.md", "scope": "user" },
+            { "name": "off", "description": "", "enabled": false, "path": "/s/off/SKILL.md", "scope": "user" },
+        ]}]}}).to_string());
+        assert_eq!(
+            commands,
+            [ChatEvent::Commands {
+                commands: vec![ChatCommand {
+                    trigger: "$deploy".into(),
+                    description: Some("Deploys it".into()),
+                    argument_hint: None,
+                }],
+            }]
+        );
+        let sent = sent(&p.message("m1", "$deploy to staging", &[]));
+        assert_eq!(
+            sent[0]["params"]["input"][0],
+            json!({ "type": "skill", "name": "deploy", "path": "/s/deploy/SKILL.md" })
+        );
     }
 
     #[test]

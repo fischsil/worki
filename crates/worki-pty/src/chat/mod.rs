@@ -36,6 +36,10 @@ pub enum ChatEvent {
         models: Vec<ModelChoice>,
         permission_modes: Vec<String>,
     },
+    /// The commands and skills a message can start with.
+    Commands {
+        commands: Vec<ChatCommand>,
+    },
     /// The user's message, as worki sent it, with what was attached. `id` is set
     /// for a message sent in this session, which the agent then reads (`UserRead`), possibly
     /// only after its current step.
@@ -137,6 +141,15 @@ pub struct ModelChoice {
     pub description: Option<String>,
     /// Empty when the model has no effort levels.
     pub effort_levels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCommand {
+    /// What the message starts with, such as `/compact` or Codex's `$skill`.
+    pub trigger: String,
+    pub description: Option<String>,
+    pub argument_hint: Option<String>,
 }
 
 /// What the conversation shows of an attachment. Images stay out of the history: the host keeps
@@ -359,18 +372,17 @@ pub trait ChatProtocol: Send {
 }
 
 /// The account an agent reports as JSON with an `email` and the given plan and organization
+pub(crate) fn non_empty(value: &serde_json::Value) -> Option<String> {
+    value.as_str().filter(|v| !v.is_empty()).map(str::to_owned)
+}
+
 /// keys, or `None` when it names none of them (signed in with an API key).
 pub fn account(
     value: &serde_json::Value,
     plan: &str,
     organization: &str,
 ) -> Option<crate::Account> {
-    let text = |key: &str| {
-        value[key]
-            .as_str()
-            .filter(|v| !v.is_empty())
-            .map(str::to_owned)
-    };
+    let text = |key: &str| non_empty(&value[key]);
     let account = crate::Account {
         email: text("email"),
         plan: text(plan),

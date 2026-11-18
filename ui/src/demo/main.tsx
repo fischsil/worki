@@ -14,6 +14,8 @@ const EMPTY_CART = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://
   <text x="144" y="194" font-size="14" font-weight="600" fill="#1d1d20">Total</text><text x="336" y="194" font-size="14" font-weight="600" fill="#d93025" text-anchor="end">$0.00</text>
 </svg>`)}`;
 const chatImages = [EMPTY_CART];
+let dictation: ReturnType<typeof setTimeout>[] = [];
+let stopDictation = () => {};
 const ROOT = "/Users/dev/worki/worktrees";
 const now = Math.floor(Date.now() / 1000);
 
@@ -253,6 +255,18 @@ const chatEvents: object[] = [
       { value: "opus", model: "claude-opus-5-5", label: "Opus 5.5", description: "For complex work", effortLevels: ["low", "medium", "high", "xhigh", "max"] },
       { value: "sonnet", model: "claude-sonnet-5-5", label: "Sonnet 5.5", description: "Fast everyday coding", effortLevels: ["low", "medium", "high", "xhigh", "max"] },
       { value: "haiku", model: "claude-haiku-5-5", label: "Haiku 5.5", description: "Fastest", effortLevels: ["low", "medium", "high"] },
+    ],
+  },
+  {
+    type: "commands",
+    commands: [
+      { trigger: "/compact", description: "Clear the conversation history but keep a summary in context", argumentHint: "<optional custom summarization instructions>" },
+      { trigger: "/context", description: "Show current context usage", argumentHint: null },
+      { trigger: "/cost", description: "Show the total cost and duration of the current session", argumentHint: null },
+      { trigger: "/init", description: "Initialize a new CLAUDE.md file with codebase documentation", argumentHint: null },
+      { trigger: "/review", description: "Review a pull request", argumentHint: "<pr number>" },
+      { trigger: "/security-review", description: "Complete a security review of the pending changes on the current branch", argumentHint: null },
+      { trigger: "/simplify", description: "Review the changed code for reuse, simplification and efficiency, then apply the fixes", argumentHint: null },
     ],
   },
   { type: "session", model: "claude-opus-5-5", permissionMode: "default", effort: "high" },
@@ -706,6 +720,23 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       }
       return 1;
     }
+    case "dictation_access":
+      return true;
+    case "start_dictation": {
+      const words = "Also hide the shipping row when the cart is empty".split(" ");
+      dictation = words.map((_, i) =>
+        setTimeout(() => args.onEvent.onmessage?.({ type: "text", text: words.slice(0, i + 1).join(" "), done: false }), 300 * (i + 1)),
+      );
+      stopDictation = () => args.onEvent.onmessage?.({ type: "text", text: `${words.join(" ")}.`, done: true });
+      return null;
+    }
+    case "stop_dictation":
+      dictation.forEach(clearTimeout);
+      setTimeout(stopDictation, 200);
+      return null;
+    case "cancel_dictation":
+      dictation.forEach(clearTimeout);
+      return null;
     case "chat_image":
       return chatImages[args.image];
     case "send_chat_message": {

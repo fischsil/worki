@@ -4,5 +4,9 @@
 <dict>
     <key>NSAppleEventsUsageDescription</key>
     <string>worki uses Terminal and AppleScript to set up and remove the agent user for User Isolation.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>worki listens while you dictate a chat message.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>worki turns what you dictate into the text of a chat message.</string>
 </dict>
 </plist>

@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use super::{
-    data_url, Attachment, BackgroundTask, ChatEvent, ChatProtocol, ChatSetting, ModelChoice,
-    PermissionAnswer, Question, SentAttachment, StateUpdate,
+    data_url, non_empty, Attachment, BackgroundTask, ChatCommand, ChatEvent, ChatProtocol,
+    ChatSetting, ModelChoice, PermissionAnswer, Question, SentAttachment, StateUpdate,
 };
 
 /// Claude Code's permission modes worki offers. Skipping all prompts isn't among them: Claude
@@ -162,11 +162,24 @@ impl ClaudeProtocol {
                 self.state.account =
                     super::account(&answer["account"], "subscriptionType", "organization");
                 self.report_remote();
+                let commands = answer["commands"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| {
+                        Some(ChatCommand {
+                            trigger: format!("/{}", c["name"].as_str()?),
+                            description: non_empty(&c["description"]),
+                            argument_hint: non_empty(&c["argumentHint"]),
+                        })
+                    })
+                    .collect();
                 vec![
                     ChatEvent::Options {
                         models,
                         permission_modes: PERMISSION_MODES.map(String::from).to_vec(),
                     },
+                    ChatEvent::Commands { commands },
                     self.session(),
                 ]
             }
@@ -1106,6 +1119,10 @@ mod tests {
                     "request_id": init["request_id"],
                     "response": {
                         "current_permission_mode": "default",
+                        "commands": [
+                            { "name": "compact", "description": "Clear the history but keep a summary", "argumentHint": "<instructions>" },
+                            { "name": "review", "description": "", "argumentHint": "" }
+                        ],
                         "models": [
                             { "value": "opus", "resolvedModel": "claude-opus-5-5", "displayName": "Opus 5.5",
                               "description": "For complex work", "supportedEffortLevels": ["low", "high"] },
@@ -1128,6 +1145,23 @@ mod tests {
         assert_eq!(models[0].effort_levels, ["low", "high"]);
         assert!(models[1].effort_levels.is_empty());
         assert!(permission_modes.contains(&"acceptEdits".to_string()));
+        assert_eq!(
+            events[1],
+            ChatEvent::Commands {
+                commands: vec![
+                    ChatCommand {
+                        trigger: "/compact".into(),
+                        description: Some("Clear the history but keep a summary".into()),
+                        argument_hint: Some("<instructions>".into()),
+                    },
+                    ChatCommand {
+                        trigger: "/review".into(),
+                        description: None,
+                        argument_hint: None,
+                    },
+                ],
+            }
+        );
         // The status bar shows the default model by name before the first turn.
         let state = p.take_state().unwrap().agent.unwrap();
         assert_eq!(state.model.as_deref(), Some("Opus 5.5"));

@@ -4,6 +4,7 @@ import {
   api,
   type AgentStatusKind,
   type BackgroundTask,
+  type ChatCommand,
   type ChatEvent,
   type ChatQuestion,
   type ModelChoice,
@@ -50,6 +51,7 @@ export interface Chat {
   items: ChatItem[];
   settings: ChatSettings | null;
   options: { models: ModelChoice[]; permissionModes: string[] } | null;
+  commands: ChatCommand[];
   exited: { code: number; error: string | null } | null;
   /** Open permission requests, oldest first. */
   open: Extract<ChatItem, { kind: "permission" }>[];
@@ -72,6 +74,7 @@ export class ChatModel {
   private exited: Chat["exited"] = null;
   private settings: Chat["settings"] = null;
   private options: Chat["options"] = null;
+  private commands: ChatCommand[] = [];
   private status: Chat["status"] = null;
   private turnStarted: number | null = null;
   private background: Chat["background"] = [];
@@ -174,6 +177,9 @@ export class ChatModel {
       case "options":
         this.options = { models: event.models, permissionModes: event.permissionModes };
         break;
+      case "commands":
+        this.commands = event.commands;
+        break;
     }
   }
 
@@ -185,6 +191,7 @@ export class ChatModel {
       items: [...this.items],
       settings: this.settings,
       options: this.options,
+      commands: this.commands,
       exited: this.exited,
       open,
       status: this.status,
