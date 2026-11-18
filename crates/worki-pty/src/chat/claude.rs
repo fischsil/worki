@@ -677,7 +677,9 @@ fn past_user_message(content: &Value) -> Vec<ChatEvent> {
                     .and_then(|rest| rest.split_once('"'))
                 {
                     attachments.push(SentAttachment::named(name.0));
-                } else if t.starts_with("[Request interrupted") {
+                } else if t.starts_with("[Request interrupted")
+                    || t.trim_start().starts_with("<task-notification>")
+                {
                     events.extend(notice(t, &None));
                 } else if !t.starts_with("<system-reminder>")
                     && !t.starts_with("<command-")
@@ -702,18 +704,32 @@ fn past_user_message(content: &Value) -> Vec<ChatEvent> {
     events
 }
 
-/// Text the agent's side adds to the conversation, such as "[Request interrupted by user]".
-/// Subagents' prompts aren't shown.
+/// Text the agent's side adds to the conversation, such as "[Request interrupted by user]" or
+/// a finished background job's `<task-notification>`. Subagents' prompts aren't shown.
 fn notice(text: &str, parent: &Option<String>) -> Vec<ChatEvent> {
     let text = text.trim();
     if parent.is_some() || text.is_empty() {
         return Vec::new();
+    }
+    if text.starts_with("<task-notification>") {
+        return element(text, "summary")
+            .map(|summary| ChatEvent::Notice {
+                text: summary.trim().into(),
+            })
+            .into_iter()
+            .collect();
     }
     let text = text
         .strip_prefix('[')
         .and_then(|t| t.strip_suffix(']'))
         .unwrap_or(text);
     vec![ChatEvent::Notice { text: text.into() }]
+}
+
+/// The text of the first `<name>` element in `text`.
+fn element<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let (_, rest) = text.split_once(&format!("<{name}>"))?;
+    Some(rest.split_once(&format!("</{name}>"))?.0)
 }
 
 /// A tool result's content: a string, or blocks of text and images.
@@ -764,6 +780,20 @@ mod tests {
 
     fn parse_all(p: &mut ClaudeProtocol, lines: &[&str]) -> Vec<ChatEvent> {
         lines.iter().flat_map(|l| p.parse(l)).collect()
+    }
+
+    #[test]
+    fn shows_a_finished_background_job_by_its_summary() {
+        let mut p = ClaudeProtocol::new("s");
+        let notification = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"Run the tests\" completed (exit code 0)</summary>\n</task-notification>";
+        let expected = [ChatEvent::Notice {
+            text: "Background command \"Run the tests\" completed (exit code 0)".into(),
+        }];
+        let live =
+            json!({ "type": "user", "message": { "role": "user", "content": notification } });
+        assert_eq!(p.parse(&live.to_string()), expected);
+        let replayed = json!({ "type": "user", "isReplay": true, "message": { "role": "user", "content": [{ "type": "text", "text": notification }] } });
+        assert_eq!(p.parse(&replayed.to_string()), expected);
     }
 
     #[test]
