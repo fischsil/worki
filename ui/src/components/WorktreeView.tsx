@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Coins, GitBranch, GitCompareArrows, MoreHorizontal, Send, SquareTerminal, X } from "lucide-react";
 
-import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { branchName, type ChangedFile, errorMessage, type Project, remoteDefaultBase, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
 import { type ReviewComment, reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
 import { useUi } from "../lib/store";
@@ -38,9 +38,9 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const comments = useWorktreeComments(worktree.path);
   const scope = useUi((s) => s.changesScope);
   const setScope = useUi((s) => s.setChangesScope);
-  const base = useCompareBase(worktree.path, worktree.base ?? project.defaultBase);
+  const base = useCompareBase(worktree.path, worktree.base ?? remoteDefaultBase(project));
   const hasBranchTab = !!base;
-  const onBase = !!worktree.branch && base?.replace(/^origin\//, "") === worktree.branch;
+  const onBase = !!worktree.branch && !!base && branchName(base) === worktree.branch;
   const tab = scope === "branch" && hasBranchTab ? "branch" : "uncommitted";
   const branchScope = tab === "branch";
   const branch = useBranchChanges(worktree.path, base);
@@ -172,6 +172,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                 <>
                   {worktree.branch && branch.data && (
                     <BranchStatus
+                      projectId={project.id}
                       worktreePath={worktree.path}
                       branch={worktree.branch}
                       base={base}

@@ -86,17 +86,70 @@ const BASE_KEY: &str = "workibase";
 
 /// Records what a new branch was started from; the branch is compared with it later.
 pub async fn set_branch_base(host: &Host, repo: &Path, branch: &str, base: &str) -> Result<()> {
-    host.git(
-        repo,
-        [
-            "config",
-            "--local",
-            &format!("branch.{branch}.{BASE_KEY}"),
-            base,
-        ],
-    )
-    .await
-    .map(drop)
+    let key = branch_key(branch, BASE_KEY);
+    host.git(repo, ["config", "--local", &key, base])
+        .await
+        .map(drop)
+}
+
+fn branch_key(branch: &str, key: &str) -> String {
+    format!("branch.{branch}.{key}")
+}
+
+/// Where the branch's own commits start, kept from when its target changed until it's rebased
+/// onto the new one; without it a rebase would also carry over the old target's commits.
+const WORK_FROM_KEY: &str = "workifrom";
+
+/// Moves the branch from target `previous` to `base`, remembering where its own commits start.
+pub async fn retarget_branch(
+    host: &Host,
+    worktree: &Path,
+    branch: &str,
+    previous: &str,
+    base: &str,
+) -> Result<()> {
+    let key = branch_key(branch, WORK_FROM_KEY);
+    if host
+        .git(worktree, ["config", "--local", "--get", &key])
+        .await
+        .is_err()
+    {
+        if let Ok(fork) = fork_point(host, worktree, previous).await {
+            host.git(worktree, ["config", "--local", &key, &fork])
+                .await?;
+        }
+    }
+    set_branch_base(host, worktree, branch, base).await
+}
+
+/// The checked-out branch's `workifrom` key and commit, while that commit is still part of it.
+async fn work_from(host: &Host, worktree: &Path) -> Option<(String, String)> {
+    let pattern = format!(r"^branch\..*\.{WORK_FROM_KEY}$");
+    let all = host
+        .git(worktree, ["config", "--local", "--get-regexp", &pattern])
+        .await
+        .ok()?;
+    let branch = host
+        .git(worktree, ["symbolic-ref", "--short", "-q", "HEAD"])
+        .await
+        .ok()?;
+    let key = branch_key(branch.trim(), WORK_FROM_KEY);
+    let from = all
+        .lines()
+        .find_map(|line| line.strip_prefix(key.as_str())?.strip_prefix(' '))?
+        .trim()
+        .to_owned();
+    let ours = host
+        .git(worktree, ["merge-base", "--is-ancestor", &from, "HEAD"])
+        .await
+        .is_ok();
+    if !ours {
+        host.git(worktree, ["config", "--local", "--unset", &key])
+            .await
+            .ok();
+        return None;
+    }
+    Some((key, from))
 }
 
 /// What each branch was started from, by branch name.
@@ -296,8 +349,27 @@ pub async fn status(host: &Host, worktree: &Path) -> Result<WorktreeStatus> {
         status.stopped = stopped_operation(host, worktree).await;
     }
     drop_sandbox_placeholders(host, worktree, &mut status.changed_files);
-    if let Ok(totals) = count_lines(host, worktree, "HEAD", &mut status.changed_files).await {
+    let pushed = status
+        .upstream
+        .is_none()
+        .then(|| status_branch(&porcelain))
+        .flatten()
+        .map(|branch| format!("origin/{branch}"));
+    let (totals, counts) = tokio::join!(
+        count_lines(host, worktree, "HEAD", &mut status.changed_files),
+        async {
+            match &pushed {
+                Some(remote) => ahead_behind(host, worktree, remote).await.ok(),
+                None => None,
+            }
+        }
+    );
+    if let Ok(totals) = totals {
         (status.insertions, status.deletions) = totals;
+    }
+    if let Some(counts) = counts {
+        (status.ahead, status.behind) = counts;
+        status.upstream = pushed;
     }
     Ok(status)
 }
@@ -335,6 +407,30 @@ fn drop_sandbox_placeholders(host: &Host, worktree: &Path, files: &mut Vec<Chang
             || !std::fs::metadata(worktree.join(&f.path))
                 .is_ok_and(|m| m.is_file() && m.len() == 0 && m.permissions().readonly())
     });
+}
+
+fn status_branch(porcelain: &str) -> Option<&str> {
+    porcelain
+        .split('\0')
+        .find_map(|t| t.strip_prefix("# branch.head "))
+        .filter(|b| *b != "(detached)")
+}
+
+/// How many commits HEAD has that `other` doesn't, and the other way around.
+async fn ahead_behind(host: &Host, worktree: &Path, other: &str) -> Result<(u32, u32)> {
+    let out = host
+        .git(
+            worktree,
+            [
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("HEAD...{other}"),
+            ],
+        )
+        .await?;
+    let mut counts = out.split_whitespace().map(|n| n.parse().unwrap_or(0));
+    Ok((counts.next().unwrap_or(0), counts.next().unwrap_or(0)))
 }
 
 pub fn parse_status_v2(text: &str) -> WorktreeStatus {
@@ -469,7 +565,16 @@ pub async fn file_diff(
     Ok(text)
 }
 
+/// Where the branch's own commits start: where it left `base`, or where it left its previous
+/// target when that changed since the last rebase.
 async fn merge_base(host: &Host, worktree: &Path, base: &str) -> Result<String> {
+    match work_from(host, worktree).await {
+        Some((_, from)) => Ok(from),
+        None => fork_point(host, worktree, base).await,
+    }
+}
+
+async fn fork_point(host: &Host, worktree: &Path, base: &str) -> Result<String> {
     Ok(host
         .git(worktree, ["merge-base", "HEAD", base])
         .await?
@@ -723,29 +828,26 @@ pub fn parse_log(text: &str) -> Vec<CommitInfo> {
         .collect()
 }
 
-/// What a worktree is compared with and rebased onto: `origin/<base>` when the repository has it
-/// (what pull requests are compared against), else the local branch. When the branch it started
-/// from is gone, such as one deleted after its pull request was merged, the default branch.
+/// What a worktree is compared with and rebased onto: `base` as it was picked, local or remote.
+/// When it's gone, such as a branch deleted after its pull request was merged, the default
+/// branch, preferring the remote one.
 pub async fn compare_base(host: &Host, worktree: &Path, base: &str) -> String {
-    if let Some(found) = existing_base(host, worktree, base).await {
-        return found;
+    if usable_base(host, worktree, base).await {
+        return base.to_owned();
     }
     let default = default_base(host, worktree).await;
-    existing_base(host, worktree, &default)
-        .await
-        .unwrap_or_else(|| base.to_owned())
+    let local = default.strip_prefix("origin/").unwrap_or(&default);
+    for candidate in [format!("origin/{local}"), local.to_owned()] {
+        if usable_base(host, worktree, &candidate).await {
+            return candidate;
+        }
+    }
+    base.to_owned()
 }
 
-async fn existing_base(host: &Host, worktree: &Path, base: &str) -> Option<String> {
-    let local = base.strip_prefix("origin/");
-    let remote = local.map_or_else(|| format!("origin/{base}"), |_| base.to_owned());
-    if ref_exists(host, worktree, &format!("refs/remotes/{remote}")).await {
-        return Some(remote);
-    }
-    let usable = local.is_none()
-        && ref_exists(host, worktree, base).await
-        && !upstream_gone(host, worktree, base).await;
-    usable.then(|| base.to_owned())
+async fn usable_base(host: &Host, worktree: &Path, base: &str) -> bool {
+    ref_exists(host, worktree, base).await
+        && (base.starts_with("origin/") || !upstream_gone(host, worktree, base).await)
 }
 
 /// Whether local branch `branch` tracks a remote branch that was deleted.
@@ -773,10 +875,19 @@ pub async fn fetch(host: &Host, worktree: &Path) -> Result<()> {
 /// conflicts the rebase is undone and the conflicting files are reported.
 pub async fn update_from_base(host: &Host, worktree: &Path, base: &str) -> Result<BaseUpdate> {
     let before = host.git(worktree, ["rev-parse", "HEAD"]).await?;
-    let (_, out) = host
-        .git_output(worktree, ["rebase", "--autostash", base])
-        .await?;
+    let work_from = work_from(host, worktree).await;
+    let mut args = vec!["rebase", "--autostash"];
+    match &work_from {
+        Some((_, from)) => args.extend(["--onto", base, from]),
+        None => args.push(base),
+    }
+    let (_, out) = host.git_output(worktree, args).await?;
     if out.status.success() {
+        if let Some((key, _)) = &work_from {
+            host.git(worktree, ["config", "--local", "--unset", key])
+                .await
+                .ok();
+        }
         let after = host.git(worktree, ["rev-parse", "HEAD"]).await?;
         return Ok(if after == before {
             BaseUpdate::UpToDate

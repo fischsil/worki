@@ -20,11 +20,14 @@ export function BranchPicker({
   branches,
   onChange,
   disabled,
+  quiet,
 }: {
   value: string;
   branches: string[];
   onChange: (branch: string) => void;
   disabled?: boolean;
+  /** Reads as plain text until hovered or open. */
+  quiet?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -89,11 +92,16 @@ export function BranchPicker({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-8 w-full items-center gap-2 rounded-md border border-line bg-panel px-2.5 text-left text-[13px] hover:bg-hover disabled:opacity-50"
+        className={clsx(
+          "group flex h-8 w-full items-center gap-2 rounded-md border px-2.5 text-left text-[13px] disabled:opacity-50",
+          quiet && !open
+            ? "border-transparent hover:border-line hover:bg-hover"
+            : "border-line bg-panel hover:bg-hover",
+        )}
       >
         <GitBranch size={13} className="shrink-0 text-muted" />
         <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{value}</span>
-        <ChevronDown size={13} className="shrink-0 text-muted" />
+        <ChevronDown size={13} className={clsx("shrink-0 text-muted", quiet && !open && "invisible group-hover:visible")} />
       </button>
       {open && place && createPortal(
         <div

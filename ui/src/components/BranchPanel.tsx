@@ -23,12 +23,14 @@ import { create } from "zustand";
 
 import {
   api,
+  branchName,
   canChat,
   type CommitDraft,
   type CommitInfo,
   DEFAULT_WRITER_COMMAND,
   errorMessage,
   type GitOperation,
+  isRemoteBranch,
   type PullRequest,
   type SessionInfo,
   type Worktree,
@@ -37,6 +39,7 @@ import {
 import {
   keys,
   useAgentSettings,
+  useBranches,
   useBranchLog,
   useProjects,
   usePullRequest,
@@ -48,6 +51,7 @@ import { reviewTarget, sendReview, useReview } from "../lib/review";
 import { useUi } from "../lib/store";
 import { plural } from "../lib/text";
 import { toast } from "../lib/toast";
+import { BranchPicker } from "./BranchPicker";
 import { Button, Checkbox, Dialog, ErrorText, Field, IconButton, Input, Textarea } from "./ui";
 
 /** Where agent tasks go: the worktree's open agent (the newest running agent if the open tab
@@ -299,28 +303,58 @@ export function Section({
 
 /** How the branch stands against its base, and rebasing onto it. */
 export function BranchStatus({
+  projectId,
   worktreePath,
   branch,
   base,
   ahead,
   behind,
 }: {
+  projectId: string;
   worktreePath: string;
   branch: string;
   base: string;
   ahead: number;
   behind: number;
 }) {
+  const qc = useQueryClient();
+  const { data: branches = [] } = useBranches(projectId);
+  const targets = branches.filter((b) => branchName(b) !== branch);
+  const remote = isRemoteBranch(base);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<{ files: string[]; problem: string } | null>(null);
   const refresh = useRefreshGit(worktreePath);
   const { target, ask } = useAgentTarget(worktreePath);
 
+  async function retarget(newBase: string) {
+    if (newBase !== base) {
+      try {
+        await api.retargetBranch(worktreePath, branch, base, newBase);
+        setFailed(null);
+        await qc.invalidateQueries({ queryKey: keys.worktrees(projectId) });
+      } catch (e) {
+        toast(`Couldn't change the target branch: ${errorMessage(e)}`);
+        return;
+      }
+    }
+    const into = branchName(newBase);
+    const pr = qc.getQueryData<PullRequest | null>(keys.pullRequest(worktreePath));
+    if (!isRemoteBranch(newBase) || pr?.state !== "OPEN" || pr.base === into) return;
+    try {
+      await api.setPullRequestBase(worktreePath, pr.number, into);
+      toast(`Pull request #${pr.number} now merges into ${into}`, "info");
+    } catch (e) {
+      toast(`Couldn't make pull request #${pr.number} merge into ${into}: ${errorMessage(e)}`);
+    }
+    await qc.invalidateQueries({ queryKey: keys.pullRequest(worktreePath) });
+  }
+
   async function rebase() {
     setBusy(true);
     setFailed(null);
     try {
-      await api.fetchRemote(worktreePath).catch((e) => toast(`Couldn't fetch, rebasing on what's here: ${errorMessage(e)}`));
+      if (remote)
+        await api.fetchRemote(worktreePath).catch((e) => toast(`Couldn't fetch, rebasing on what's here: ${errorMessage(e)}`));
       const result = await api.updateFromBase(worktreePath, base);
       if (result.kind === "conflicts")
         setFailed({ files: result.files, problem: `conflicts in ${result.files.join(", ")}` });
@@ -350,11 +384,23 @@ export function BranchStatus({
           onClick={rebase}
           disabled={busy}
           variant={behind > 0 ? "primary" : "secondary"}
-          title={`Fetch, then replay this branch's commits on top of ${base}. Uncommitted changes are kept.`}
+          title={`${remote ? "Fetch, then replay" : "Replay"} this branch's commits on top of ${base}. Uncommitted changes are kept.`}
         >
           <RefreshCw size={12} className={clsx(busy && "animate-spin")} />
           {busy ? "Rebasing…" : "Rebase"}
         </Button>
+      </div>
+      <div className="flex items-center gap-2" title="Compared with, rebased onto and merged into by a pull request">
+        <span className="fs-panel-sm text-muted">Target</span>
+        <div className="min-w-0 flex-1">
+          <BranchPicker
+            value={base}
+            branches={targets}
+            onChange={retarget}
+            disabled={busy}
+            quiet
+          />
+        </div>
       </div>
       {behind > 0 && !failed && (
         <p className="fs-panel-sm text-faint">
@@ -500,6 +546,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
 
   const rewrites = (status?.behind ?? 0) > 0;
   const remote = status?.upstream ?? `origin/${worktree.branch}`;
+  const target = branchName(base);
 
   async function push() {
     if (
@@ -606,6 +653,13 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
               <ExternalLink size={10} className="ml-1 inline text-faint" />
             </span>
           </button>
+          {pr.state === "OPEN" && (
+            <p className={clsx("fs-panel-sm", pr.base === target ? "text-faint" : "text-warn")}>
+              Merges into <span className="font-mono">{pr.base}</span>
+              {pr.base !== target &&
+                `, not the target ${target}.${isRemoteBranch(base) ? " Pick the target again to move it." : ""}`}
+            </p>
+          )}
           <Checks pr={pr} />
           <div className="mt-1 flex flex-wrap gap-2">
             {pr.state === "OPEN" && (status?.ahead ?? 0) > 0 && (
@@ -695,7 +749,7 @@ function CreatePrDialog({
   const [body, setBody] = useState(saved?.body ?? defaultBody);
   const [draft, setDraft] = useState(false);
   const [busy, setBusy] = useState(false);
-  const target = base.replace(/^origin\//, "");
+  const target = branchName(base);
   const [error, setError] = useState<string | null>(null);
   const { writer } = useAgentTarget(worktree.path);
   const [writing, setWriting] = useState(false);

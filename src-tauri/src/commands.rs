@@ -344,6 +344,20 @@ pub async fn pull_request(
 }
 
 #[tauri::command]
+pub async fn set_pull_request_base(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    number: u64,
+    base: String,
+) -> CmdResult<()> {
+    state
+        .projects
+        .set_pull_request_base(&worktree_path, number, &base)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 pub async fn draft_pull_request(
     state: State<'_, AppState>,
     worktree_path: PathBuf,
@@ -419,6 +433,21 @@ pub async fn compare_base(
     state
         .projects
         .compare_base(&worktree_path, &base)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn retarget_branch(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    branch: String,
+    previous: String,
+    base: String,
+) -> CmdResult<()> {
+    state
+        .projects
+        .retarget_branch(&worktree_path, &branch, &previous, &base)
         .await
         .map_err(err)
 }

@@ -1219,16 +1219,42 @@ impl ProjectService {
         Ok(git::compare_base(&self.host_for_path(worktree)?, worktree, base).await)
     }
 
+    /// Changes what a worktree's branch is compared with, rebased onto and merged into.
+    pub async fn retarget_branch(
+        &self,
+        worktree: &Path,
+        branch: &str,
+        previous: &str,
+        base: &str,
+    ) -> Result<()> {
+        let host = self.host_for_path(worktree)?;
+        if !git::ref_exists(&host, worktree, base).await {
+            return Err(Error::UnknownRef(base.into()));
+        }
+        git::retarget_branch(&host, worktree, branch, previous, base).await
+    }
+
     pub async fn fetch(&self, worktree: &Path) -> Result<()> {
         git::fetch(&self.host_for_path(worktree)?, worktree).await
     }
 
     pub async fn update_from_base(&self, worktree: &Path, base: &str) -> Result<BaseUpdate> {
-        git::update_from_base(&self.host_for_path(worktree)?, worktree, base).await
+        let host = self.host_for_path(worktree)?;
+        let base = git::compare_base(&host, worktree, base).await;
+        git::update_from_base(&host, worktree, &base).await
     }
 
     pub async fn pull_request(&self, worktree: &Path) -> Result<Option<PullRequest>> {
         github::pull_request(&self.host_for_path(worktree)?, worktree).await
+    }
+
+    pub async fn set_pull_request_base(
+        &self,
+        worktree: &Path,
+        number: u64,
+        base: &str,
+    ) -> Result<()> {
+        github::set_pull_request_base(&self.host_for_path(worktree)?, worktree, number, base).await
     }
 
     pub async fn create_pull_request(

@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api, errorMessage, isolationLabel, type Project, type ProjectIsolation } from "../lib/api";
+import { api, errorMessage, isolationLabel, type Project, type ProjectIsolation, remoteDefaultBase } from "../lib/api";
 import { keys, useBranches, useProjectDefaultIsolation, useSetupScripts } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { toast } from "../lib/toast";
@@ -18,7 +18,7 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
   const setupScript = scripts?.project?.trim() || scripts?.repoFile?.trim() || null;
 
   const [name, setName] = useState("");
-  const [base, setBase] = useState(project.defaultBase);
+  const [base, setBase] = useState(remoteDefaultBase(project));
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -44,7 +44,8 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
   const canSubmit = !!branch && !nameTaken && !!base;
 
   useEffect(() => {
-    if (branches.length > 0 && !branches.includes(base)) setBase(localBranches[0] ?? branches[0]);
+    if (branches.length > 0 && !branches.includes(base))
+      setBase(branches.includes(project.defaultBase) ? project.defaultBase : (localBranches[0] ?? branches[0]));
   }, [branches]);
 
   /** Closes at once: the Activity panel and the worktree's row show how it goes. */

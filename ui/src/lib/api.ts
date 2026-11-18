@@ -196,6 +196,8 @@ export interface PullRequest {
   url: string;
   state: "OPEN" | "CLOSED" | "MERGED";
   isDraft: boolean;
+  /** The branch it merges into. */
+  base: string;
   checksPassed: number;
   checksFailed: number;
   checksPending: number;
@@ -528,6 +530,8 @@ export const api = {
   branchLog: (worktreePath: string, base: string | null) => invoke<CommitInfo[]>("branch_log", { worktreePath, base }),
   updateFromBase: (worktreePath: string, base: string) => invoke<BaseUpdate>("update_from_base", { worktreePath, base }),
   pullRequest: (worktreePath: string) => invoke<PullRequest | null>("pull_request", { worktreePath }),
+  setPullRequestBase: (worktreePath: string, number: number, base: string) =>
+    invoke<void>("set_pull_request_base", { worktreePath, number, base }),
   createPullRequest: (worktreePath: string, base: string, title: string, body: string, draft: boolean) =>
     invoke<PullRequest>("create_pull_request", { worktreePath, base, title, body, draft }),
   draftPullRequest: (worktreePath: string, base: string, instructions: string, writer: Writer) =>
@@ -535,6 +539,8 @@ export const api = {
   draftCommits: (worktreePath: string, files: string[], instructions: string, writer: Writer) =>
     invoke<CommitDraft[]>("draft_commits", { worktreePath, files, instructions, writer }),
   compareBase: (worktreePath: string, base: string) => invoke<string>("compare_base", { worktreePath, base }),
+  retargetBranch: (worktreePath: string, branch: string, previous: string, base: string) =>
+    invoke<void>("retarget_branch", { worktreePath, branch, previous, base }),
   fetchRemote: (worktreePath: string) => invoke<void>("fetch_remote", { worktreePath }),
   pushBranch: (worktreePath: string) => invoke<void>("push_branch", { worktreePath }),
   prReviewComments: (worktreePath: string, number: number) =>
@@ -690,6 +696,14 @@ export const api = {
   setSecret: (scope: string, name: string, value: string) => invoke<void>("set_secret", { scope, name, value }),
   deleteSecret: (scope: string, name: string) => invoke<void>("delete_secret", { scope, name }),
 };
+
+export const isRemoteBranch = (ref: string) => ref.startsWith("origin/");
+
+/** A branch as GitHub names it, without the remote. */
+export const branchName = (ref: string) => ref.replace(/^origin\//, "");
+
+/** The project's default branch on the remote, which new worktrees start from and target. */
+export const remoteDefaultBase = (project: Project) => `origin/${branchName(project.defaultBase)}`;
 
 export function worktreeLabel(wt: Worktree): string {
   return wt.branch ?? `detached @ ${wt.head.slice(0, 7)}`;

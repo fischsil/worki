@@ -263,6 +263,8 @@ pub struct PullRequest {
     /// OPEN, CLOSED or MERGED.
     pub state: String,
     pub is_draft: bool,
+    /// The branch it merges into.
+    pub base: String,
     pub checks_passed: u32,
     pub checks_failed: u32,
     pub checks_pending: u32,

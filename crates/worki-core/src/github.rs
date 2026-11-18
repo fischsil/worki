@@ -41,6 +41,8 @@ struct PrView {
     state: String,
     is_draft: bool,
     #[serde(default)]
+    base_ref_name: String,
+    #[serde(default)]
     status_check_rollup: Vec<Check>,
 }
 
@@ -61,7 +63,7 @@ pub async fn pull_request(host: &Host, worktree: &Path) -> Result<Option<PullReq
         "pr",
         "view",
         "--json",
-        "number,title,url,state,isDraft,statusCheckRollup",
+        "number,title,url,state,isDraft,baseRefName,statusCheckRollup",
     ];
     let out = host.tool_output(worktree, "gh", &args).await?;
     if !out.status.success() {
@@ -98,10 +100,27 @@ pub fn parse_pr(json: &str) -> Result<PullRequest> {
         url: v.url,
         state: v.state,
         is_draft: v.is_draft,
+        base: v.base_ref_name,
         checks_passed: passed,
         checks_failed: failed,
         checks_pending: pending,
     })
+}
+
+/// Makes the pull request merge into `base`.
+pub async fn set_pull_request_base(
+    host: &Host,
+    worktree: &Path,
+    number: u64,
+    base: &str,
+) -> Result<()> {
+    gh(
+        host,
+        worktree,
+        &["pr", "edit", &number.to_string(), "--base", base],
+    )
+    .await
+    .map(drop)
 }
 
 /// Pushes the worktree's branch to `origin` and opens a pull request against `base`.
@@ -602,7 +621,7 @@ BUILD FAILED in 8m 13s\nProcess completed with exit code 1.\n…\nFailed test we
     #[test]
     fn counts_checks_by_outcome() {
         let pr = parse_pr(
-            r#"{"number":42,"title":"Fix login","url":"https://github.com/o/r/pull/42","state":"OPEN","isDraft":false,
+            r#"{"number":42,"title":"Fix login","url":"https://github.com/o/r/pull/42","state":"OPEN","isDraft":false,"baseRefName":"main",
                "statusCheckRollup":[
                  {"status":"COMPLETED","conclusion":"SUCCESS"},
                  {"status":"COMPLETED","conclusion":"FAILURE"},
@@ -613,11 +632,12 @@ BUILD FAILED in 8m 13s\nProcess completed with exit code 1.\n…\nFailed test we
         assert_eq!(
             (
                 pr.number,
+                pr.base.as_str(),
                 pr.checks_passed,
                 pr.checks_failed,
                 pr.checks_pending
             ),
-            (42, 2, 1, 1)
+            (42, "main", 2, 1, 1)
         );
     }
 

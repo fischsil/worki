@@ -74,11 +74,14 @@ function project(name: string, repoPath: string) {
 const wt = (p: string, branch: string | null, isMain = false) => ({
   path: isMain ? projects.find((x) => x.id === p)!.repoPath : `${ROOT}/${p}/${branch!.replace(/\//g, "-")}`,
   branch: branch ?? "main",
+  base: null as string | null,
   head: "abc1234",
   isMain,
   locked: false,
   prunable: false,
 });
+
+let prBase = "main";
 
 const worktrees: Record<string, ReturnType<typeof wt>[]> = {
   "acme-web": [wt("acme-web", null, true), wt("acme-web", "feat/checkout-redesign"), wt("acme-web", "fix/login-race"), wt("acme-web", "chore/react-19")],
@@ -577,7 +580,11 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     case "app_icon":
       return null;
     case "compare_base":
-      return `origin/${args.base}`;
+      return args.base;
+    case "retarget_branch":
+      for (const [id, list] of Object.entries(worktrees))
+        worktrees[id] = list.map((w) => (w.path === args.worktreePath ? { ...w, base: args.base } : w));
+      return null;
     case "branch_changes":
       return {
         base: args.base,
@@ -643,13 +650,16 @@ function handle(cmd: string, args: Record<string, any>): unknown {
           log: "> Task :web:test\n\nCartSummary > renders the total in the user's currency FAILED\n    AssertionError: expected '$12.00' to equal 'CHF 12.00'\n\n1 failed, 214 passed\nProcess completed with exit code 1.",
         },
       ];
+    case "set_pull_request_base":
+      prBase = args.base;
+      return null;
     case "pull_request":
       if (args.worktreePath === checkout)
-        return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 };
+        return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, base: prBase, checksPassed: 3, checksFailed: 0, checksPending: 1 };
       if (args.worktreePath === worktrees["acme-web"][2].path)
-        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
+        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", isDraft: false, base: "main", checksPassed: 3, checksFailed: 0, checksPending: 0 };
       if (args.worktreePath === worktrees["acme-web"][3].path)
-        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
+        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, base: "main", checksPassed: 3, checksFailed: 0, checksPending: 0 };
       return null;
     case "file_diff":
       return diff;

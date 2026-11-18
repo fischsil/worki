@@ -60,8 +60,6 @@ async fn commits_only_the_picked_files() {
     assert_eq!(left.trim(), "?? keep.txt");
     assert!(git::commit(&host, dir, &[], "nothing").await.is_err());
     assert_eq!(git::compare_base(&host, dir, "main").await, "main");
-    sh(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
-    assert_eq!(git::compare_base(&host, dir, "main").await, "origin/main");
 }
 
 #[tokio::test]
@@ -93,6 +91,12 @@ async fn compares_with_the_default_branch_once_the_base_is_gone() {
     );
     assert_eq!(
         git::compare_base(&host, dir, "feature").await,
+        "origin/main"
+    );
+
+    assert_eq!(git::compare_base(&host, dir, "main").await, "main");
+    assert_eq!(
+        git::compare_base(&host, dir, "origin/main").await,
         "origin/main"
     );
 
@@ -153,6 +157,75 @@ async fn update_from_base_rebases_or_reports_conflicts() {
     );
 }
 
+#[tokio::test]
+async fn rebasing_onto_a_new_target_moves_only_the_branchs_own_commits() {
+    let tmp = repo();
+    let dir = tmp.path();
+    let host = Host::Local;
+    sh(dir, &["checkout", "-q", "-b", "release", "main"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "release fix"]);
+    sh(dir, &["checkout", "-q", "main"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "main only"]);
+    sh(dir, &["checkout", "-q", "work"]);
+    sh(dir, &["reset", "-q", "--hard", "main"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "mine"]);
+
+    git::retarget_branch(&host, dir, "work", "main", "release")
+        .await
+        .unwrap();
+    let own = git::branch_log(&host, dir, Some("release")).await.unwrap();
+    assert_eq!(
+        own.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
+        ["mine"]
+    );
+    assert_eq!(
+        git::update_from_base(&host, dir, "release").await.unwrap(),
+        BaseUpdate::Updated
+    );
+
+    let log = Command::new("git")
+        .args(["log", "--format=%s", "release..HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "mine");
+    let left = Command::new("git")
+        .args(["config", "--get", "branch.work.workifrom"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(!left.status.success());
+}
+
+#[tokio::test]
+async fn rebasing_forgets_where_the_work_started_once_rebased_elsewhere() {
+    let tmp = repo();
+    let dir = tmp.path();
+    let host = Host::Local;
+    sh(dir, &["checkout", "-q", "-b", "release", "main"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "release fix"]);
+    sh(dir, &["checkout", "-q", "main"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "main only"]);
+    sh(dir, &["checkout", "-q", "work"]);
+    sh(dir, &["reset", "-q", "--hard", "main"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "mine"]);
+    git::retarget_branch(&host, dir, "work", "main", "release")
+        .await
+        .unwrap();
+    sh(dir, &["rebase", "-q", "--onto", "release", "main"]);
+
+    assert_eq!(
+        git::update_from_base(&host, dir, "release").await.unwrap(),
+        BaseUpdate::UpToDate
+    );
+    let log = Command::new("git")
+        .args(["log", "--format=%s", "release..HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "mine");
+}
+
 fn diverge(dir: &Path) {
     std::fs::write(dir.join("a.txt"), "ours\n").unwrap();
     sh(dir, &["commit", "-q", "-am", "ours"]);
@@ -188,6 +261,19 @@ async fn status_has_no_conflicts_in_a_clean_worktree() {
     let status = git::status(&Host::Local, tmp.path()).await.unwrap();
     assert!(status.conflicts.is_empty());
     assert_eq!(status.stopped, None);
+}
+
+#[tokio::test]
+async fn status_counts_against_the_pushed_branch_without_an_upstream() {
+    let (tmp, _remote) = with_remote();
+    let dir = tmp.path();
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "pushed"]);
+    sh(dir, &["push", "-q", "origin", "work"]);
+    sh(dir, &["commit", "-q", "--allow-empty", "-m", "not yet"]);
+
+    let status = git::status(&Host::Local, dir).await.unwrap();
+    assert_eq!(status.upstream.as_deref(), Some("origin/work"));
+    assert_eq!((status.ahead, status.behind), (1, 0));
 }
 
 fn with_remote() -> (tempfile::TempDir, tempfile::TempDir) {
