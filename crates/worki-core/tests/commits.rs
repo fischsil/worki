@@ -69,7 +69,15 @@ async fn compares_with_the_default_branch_once_the_base_is_gone() {
     let tmp = repo();
     let dir = tmp.path();
     let host = Host::Local;
-    sh(dir, &["remote", "add", "origin", "https://example.invalid/repo.git"]);
+    sh(
+        dir,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
     sh(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     sh(
         dir,
