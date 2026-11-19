@@ -59,7 +59,7 @@ impl Engine {
 
     pub fn display(self) -> &'static str {
         match self {
-            Engine::Sbx => "Docker Sandboxes (sbx)",
+            Engine::Sbx => "Docker (sbx)",
             Engine::Docker => "Docker",
             Engine::Podman => "Podman",
             Engine::Apple => "Apple containers",
@@ -381,7 +381,7 @@ impl Container {
             Ok(_) if self.engine == Engine::Sbx => self.start(name),
             Ok(_) => Ok(()),
             Err(e) if policy_missing(&format!("{e:#}")) => bail!(
-                "Docker Sandboxes needs a network policy before the first sandbox: open Isolation and \
+                "Docker (sbx) needs a network policy before the first sandbox: open Isolation and \
                  use Set up on the network policy check, or run `sbx policy init balanced`"
             ),
             // Created before but not found in the listing (e.g. the engine changed its output

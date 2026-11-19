@@ -166,7 +166,7 @@ function shortIsolationLabel(i: Isolation): string {
     case "macUser":
       return i.user;
     case "dockerSandbox":
-      return "Sandbox";
+      return "Docker (sbx)";
     case "docker":
       return "Docker";
     case "podman":

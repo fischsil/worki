@@ -4,7 +4,7 @@ import type { Resources } from "../lib/api";
 import { Field, Input } from "./ui";
 
 const HINT =
-  "Empty uses the engine's default: 4 CPUs and 4 GB for Apple containers, all CPUs and half the memory for Docker Sandboxes, no limit for Docker and Podman. A worktree's container is recreated with new values at its next session start while no session runs in it; anything installed inside it is lost.";
+  "Empty uses the engine's default: 4 CPUs and 4 GB for Apple containers, all CPUs and half the memory for Docker (sbx), no limit for Docker and Podman. A worktree's container is recreated with new values at its next session start while no session runs in it; anything installed inside it is lost.";
 
 /** CPUs and memory for containers and sandboxes; an empty field falls back to `fallback`. */
 export function ResourceFields({

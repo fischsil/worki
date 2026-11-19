@@ -52,7 +52,7 @@ export function SettingsView({ tab }: { tab: SettingsTab }) {
         {tab === "accounts" && agents && (
           <Dialog
             title="Claude Code accounts"
-            info="Logins of worki's own for Docker Sandboxes, Docker, Podman and Apple container sessions. Projects use the default one unless they pick another in their settings, where they also choose how they sign in."
+            info="Logins of worki's own for Docker (sbx), Docker, Podman and Apple container sessions. Projects use the default one unless they pick another in their settings, where they also choose how they sign in."
             onClose={closeDialog}
           >
             <ClaudeAccounts accounts={agents.accounts} defaultId={agents.defaultAccount} />

@@ -263,7 +263,7 @@ export function ProjectSettingsDialog({ project, onClose }: { project: Project; 
                       )}
                     </div>
                     {!isContainer(effective) && (
-                      <InfoText>Only Docker Sandboxes, Docker, Podman and Apple containers get it.</InfoText>
+                      <InfoText>Only Docker (sbx), Docker, Podman and Apple containers get it.</InfoText>
                     )}
                   </div>
                 </Group>
@@ -276,7 +276,7 @@ export function ProjectSettingsDialog({ project, onClose }: { project: Project; 
                     onChange={(resources) => updateEnvironment.mutate({ resources })}
                   />
                   {!isContainer(effective) && (
-                    <InfoText>Only Docker Sandboxes, Docker, Podman and Apple containers use these.</InfoText>
+                    <InfoText>Only Docker (sbx), Docker, Podman and Apple containers use these.</InfoText>
                   )}
                 </Group>
               )}

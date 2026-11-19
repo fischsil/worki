@@ -204,7 +204,7 @@ impl Isolation {
         match self {
             Self::None => "Me".into(),
             Self::MacUser { user } => user.clone(),
-            Self::DockerSandbox { .. } => "sandbox".into(),
+            Self::DockerSandbox { .. } => "Docker (sbx)".into(),
             Self::Docker { .. } => "docker".into(),
             Self::Podman { .. } => "podman".into(),
             Self::AppleContainer { .. } => "apple container".into(),

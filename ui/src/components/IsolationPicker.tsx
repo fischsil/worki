@@ -22,8 +22,8 @@ const options: { kind: Kind; label: string; hint: string }[] = [
   },
   {
     kind: "dockerSandbox",
-    label: "Docker Sandboxes",
-    hint: "Each worktree gets its own sandbox, a separate Linux microVM. Needs Docker Sandboxes (sbx).",
+    label: "Docker (sbx)",
+    hint: "Each worktree gets its own sandbox, a separate Linux microVM. Needs Docker's sbx.",
   },
   {
     kind: "docker",

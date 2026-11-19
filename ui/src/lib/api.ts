@@ -93,7 +93,7 @@ export function isolationLabel(i: Isolation): string {
   if (i.kind === "docker") return `Docker · ${i.image}`;
   if (i.kind === "podman") return `Podman · ${i.image}`;
   if (i.kind === "appleContainer") return `Apple containers · ${i.image}`;
-  return i.template ? `Docker Sandboxes · ${i.template}` : "Docker Sandboxes";
+  return i.template ? `Docker (sbx) · ${i.template}` : "Docker (sbx)";
 }
 
 export interface Project {

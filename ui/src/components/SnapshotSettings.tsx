@@ -9,7 +9,7 @@ import { SnapshotCleanupDialog } from "./SnapshotCleanupDialog";
 import { Button, ErrorText, IconButton, PageTitle } from "./ui";
 
 const ENGINES: Record<SnapshotEngine, string> = {
-  dockerSandbox: "Docker Sandboxes",
+  dockerSandbox: "Docker (sbx)",
   docker: "Docker",
   podman: "Podman",
   appleContainer: "Apple containers",

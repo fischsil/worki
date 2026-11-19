@@ -87,7 +87,7 @@ export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccoun
         </div>
       ) : (
         <p className="-mt-1 text-[13px] leading-relaxed text-faint">
-          Sign in once per account. Projects use the default one unless they pick another, in Docker Sandboxes, Docker,
+          Sign in once per account. Projects use the default one unless they pick another, in Docker (sbx), Docker,
           Podman and Apple containers.
         </p>
       )}

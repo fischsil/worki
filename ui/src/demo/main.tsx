@@ -409,7 +409,7 @@ const activities = [
     finishedAt: null,
     error: null,
     lines: [
-      info("Checking Docker Sandboxes is ready…"),
+      info("Checking Docker (sbx) is ready…"),
       { stream: "command", line: "sbx version" },
       info("Getting the worktree's container ready…"),
       { stream: "command", line: "sbx ls --json" },
@@ -667,7 +667,7 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return ["worki-acme-web:20261109-1430"];
     case "isolation_doctor":
       return [
-        check("binary", "Docker Sandboxes (sbx) is installed"),
+        check("binary", "Docker (sbx) is installed"),
         check("daemon", "The sandbox daemon is running"),
         check("image", "Template worki-acme-web:20261109-1430 is available"),
       ];

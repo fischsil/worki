@@ -56,7 +56,7 @@ export function ProjectAccount({ projectId, isolation }: { projectId: string; is
   if (!isContainer(isolation)) {
     return (
       <p className="text-[13px] leading-relaxed text-faint">
-        Only Docker Sandboxes, Docker, Podman and Apple container sessions use these; this project's sign in the way its isolation does.
+        Only Docker (sbx), Docker, Podman and Apple container sessions use these; this project's sign in the way its isolation does.
       </p>
     );
   }

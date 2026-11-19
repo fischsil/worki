@@ -44,9 +44,10 @@ checks it and cleans it up again.
 | Isolation | What the agent gets | Needs |
 |---|---|---|
 | **User Isolation** | A hidden macOS user (`_worki`) that can only reach the worktrees it was given. Your home folder stays unreadable. | Nothing extra; a one-time admin setup |
-| **Docker Sandboxes** | Its own Linux microVM per worktree | Docker Sandboxes (`sbx`) |
+| **Docker (sbx)** | Its own Linux microVM per worktree | Docker's `sbx` |
 | **Docker** | Its own container per worktree, from a small Alpine image worki builds for you | Docker Desktop |
 | **Podman** | The same, on Podman | A Podman machine |
+| **Apple containers** | Its own lightweight Linux VM per worktree, from the same image | Apple's [`container`](https://github.com/apple/container) on a Mac with Apple silicon and macOS 26 |
 | **None** | Runs as you, for trusted work | — |
 
 <p align="center">
@@ -63,7 +64,8 @@ checks it and cleans it up again.
   plus the tokens you store for an isolation. With isolation set to None, an agent runs as you.
 - **A doctor for every backend.** Checks phrased the way you'd want to read them ("_worki can't
   read files in your home folder") with one-click fixes: create the agent user, start the
-  sandbox daemon or Podman machine, build the image.
+  sandbox daemon, Podman machine or Apple's container services, install the Linux kernel Apple
+  containers boot, build the image.
 - **Agents ready inside the sandbox.** Claude Code, Codex or any other agent is installed in a
   worktree's environment the first time you start it there, and the agent trusts the worktree
   without asking. Claude Code gets the settings you define for isolated sessions and signs in
@@ -78,12 +80,15 @@ checks it and cleans it up again.
 - **A shared project folder.** Turn it on, and every worktree's sandbox or container of the
   project gets the same folder at `/worki/project` (`$WORKI_PROJECT_DIR`), for a build cache,
   say.
+- **CPUs and memory.** Set how many CPUs and how much memory each sandbox or container gets,
+  globally or per project. Left empty, the engine decides; a worktree's environment picks up
+  new values the next time an agent starts there while none is running.
 - **Agents stay put.** Environments keep running when worki quits (or stop, if you prefer), and
   Claude Code sessions pick up their conversation when worki starts again.
 - **No leftovers.** Environments are removed together with their worktree or project.
 
 <p align="center">
-  <img src="docs/screenshots/settings.png" alt="Isolation settings: Docker Sandboxes starting from a snapshot, with passing checks" width="900">
+  <img src="docs/screenshots/settings.png" alt="Isolation settings: Docker (sbx) starting from a snapshot, with passing checks" width="900">
 </p>
 
 ## Several Claude accounts, side by side
@@ -113,7 +118,7 @@ same time, without signing out and in again.
 - **Switching is safe.** When a project changes account, each worktree's sandbox or container
   moves over the next time an agent starts there while none is running.
 
-Accounts work in Docker Sandboxes, Docker and Podman.
+Accounts work in Docker (sbx), Docker, Podman and Apple containers.
 
 ## Nothing happens out of sight
 
@@ -121,7 +126,7 @@ Creating a worktree, starting an agent in a sandbox, saving a snapshot: whatever
 the background, you can watch it happen.
 
 <p align="center">
-  <img src="docs/screenshots/activity.png" alt="The Activity panel: an agent starting in a Docker Sandbox with each step and the commands worki ran, a created worktree and a failed snapshot" width="900">
+  <img src="docs/screenshots/activity.png" alt="The Activity panel: an agent starting in Docker (sbx) with each step and the commands worki ran, a created worktree and a failed snapshot" width="900">
 </p>
 
 - **Every step, as it happens.** The sidebar shows what's running right now, and the worktree it
@@ -154,10 +159,10 @@ Run Claude Code or Codex in its terminal, or as a chat that worki draws itself:
 - **Continue on your phone.** Turn on Remote Control below the message box and carry on in the
   Claude app or on claude.ai/code; what you send from there shows up in worki. Under Settings ›
   Agents, new Claude Code sessions, terminals included, start with it. worki allows it in Docker
-  Sandboxes for you.
+  (sbx) for you.
 
 <p align="center">
-  <img src="docs/screenshots/terminal.png" alt="Claude Code in its terminal, running the tests in a Docker Sandbox" width="900">
+  <img src="docs/screenshots/terminal.png" alt="Claude Code in its terminal, running the tests in Docker (sbx)" width="900">
 </p>
 
 Choose the default under Settings › General; the **+** menu offers both.
@@ -216,8 +221,8 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
    brew install --cask worki
    ```
 
-3. For container isolation, install Docker Sandboxes, Docker Desktop or Podman. User Isolation
-   needs nothing extra.
+3. For container isolation, install Docker's `sbx`, Docker Desktop, Podman or Apple's
+   `container` (`brew install container`). User Isolation needs nothing extra.
 
 Add a repository with **+**, create a worktree, pick its isolation, and start an agent. The
 doctor walks you through anything that's missing.
@@ -267,7 +272,8 @@ The README screenshots are the real UI rendered against demo data (`ui/demo.html
 scripts/screenshots.sh
 ```
 
-End-to-end tests against real container engines (need `sbx`, Docker Desktop or a Podman machine):
+End-to-end tests against real container engines (need `sbx`, Docker Desktop, a Podman machine
+or Apple's container services):
 
 ```bash
 cargo test -p worki-isolation --test containers -- --ignored
@@ -275,7 +281,7 @@ cargo test -p worki-isolation --test containers -- --ignored
 
 | Path | What |
 |---|---|
-| `crates/worki-isolation` | Isolation backends: macOS user, Docker Sandboxes, Docker, Podman, SSH |
+| `crates/worki-isolation` | Isolation backends: macOS user, Docker (sbx), Docker, Podman, Apple containers, SSH |
 | `crates/worki-core` | Projects, worktrees and git (local and over SSH), SQLite store, agent settings |
 | `crates/worki-pty` | PTY sessions with replay buffer and agent activity tracking |
 | `src-tauri` | Tauri app and IPC commands |
