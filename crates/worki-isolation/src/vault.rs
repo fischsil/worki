@@ -157,10 +157,7 @@ mod imp {
     use anyhow::Result;
 
     fn path() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("worki")
-            .join("dev-secrets.json")
+        crate::data_dir().join("dev-secrets.json")
     }
 
     pub fn exists() -> bool {

@@ -1,7 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
-import { api, type Isolation, type Project, type ProjectEnvironment, type Remote, type SessionInfo } from "./api";
+import {
+  api,
+  type Isolation,
+  type IsolationSettings,
+  type Project,
+  type ProjectEnvironment,
+  type Remote,
+  type SessionInfo,
+} from "./api";
 import { useUi } from "./store";
 
 export const keys = {
@@ -82,6 +90,18 @@ export const useSnapshotCleanup = () => useQuery({ queryKey: keys.snapshotCleanu
 
 export const useIsolationSettings = () =>
   useQuery({ queryKey: keys.isolationSettings, queryFn: api.isolationSettings });
+
+export function useUpdateIsolationSettings() {
+  const qc = useQueryClient();
+  const { data: settings } = useIsolationSettings();
+  return useMutation({
+    mutationFn: async (change: Partial<IsolationSettings>) => {
+      if (!settings) throw new Error("The settings haven't loaded yet.");
+      await api.saveIsolationSettings({ ...settings, ...change });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.isolationSettings }),
+  });
+}
 
 export const useDoctor = (isolation: Isolation | null, projectId: string | null) =>
   useQuery({

@@ -12,6 +12,7 @@ const ENGINES: Record<SnapshotEngine, string> = {
   dockerSandbox: "Docker Sandboxes",
   docker: "Docker",
   podman: "Podman",
+  appleContainer: "Apple containers",
 };
 
 const created = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });

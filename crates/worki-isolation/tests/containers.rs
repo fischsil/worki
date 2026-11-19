@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use worki_isolation::{Container, Isolation, LaunchRequest, Outdated, Workspace};
+use worki_isolation::{Container, Isolation, LaunchRequest, Outdated, Resources, Workspace};
 
 /// A public image with bash, git and tar, so Docker and Podman tests don't need worki's image.
 const TEST_IMAGE: &str = "docker.io/library/buildpack-deps:bookworm-scm";
@@ -92,6 +92,7 @@ fn lifecycle(isolation: Isolation) {
         claude_dir: None,
         claude_login_dir: None,
         shared_folder: None,
+        resources: Resources::default(),
         outdated: Outdated::Keep,
     };
     backend.grant_access(&ws).expect("environment created");
@@ -228,6 +229,7 @@ fn main_checkout(isolation: Isolation) {
         claude_dir: None,
         claude_login_dir: None,
         shared_folder: None,
+        resources: Resources::default(),
         outdated: Outdated::Keep,
     };
     backend.grant_access(&ws).expect("environment created");
@@ -280,8 +282,12 @@ fn sbx_main_checkout() {
 }
 
 fn pull(engine: &str) {
+    let args: &[&str] = match engine {
+        "container" => &["image", "pull", TEST_IMAGE],
+        _ => &["pull", "-q", TEST_IMAGE],
+    };
     let ok = Command::new(engine)
-        .args(["pull", "-q", TEST_IMAGE])
+        .args(args)
         .output()
         .is_ok_and(|o| o.status.success());
     assert!(ok, "{engine} pull {TEST_IMAGE} failed");
@@ -311,6 +317,15 @@ fn podman_lifecycle() {
     });
 }
 
+#[test]
+#[ignore = "needs Apple's container services running"]
+fn apple_container_lifecycle() {
+    pull("container");
+    lifecycle(Isolation::AppleContainer {
+        image: TEST_IMAGE.into(),
+    });
+}
+
 fn network_check(isolation: Isolation) {
     let checks = isolation.backend().doctor(None);
     let network = checks
@@ -332,6 +347,14 @@ fn docker_network_check() {
 #[ignore = "needs a running Podman machine and worki's image"]
 fn podman_network_check() {
     network_check(Isolation::Podman {
+        image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Apple's container services running and worki's image"]
+fn apple_container_network_check() {
+    network_check(Isolation::AppleContainer {
         image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
     });
 }
@@ -361,6 +384,7 @@ fn account_switch(isolation: Isolation) {
         claude_dir: Some(account.to_path_buf()),
         claude_login_dir: None,
         shared_folder: None,
+        resources: Resources::default(),
         outdated,
     };
     let config_dir = || {
@@ -401,6 +425,107 @@ fn account_switch(isolation: Isolation) {
     backend
         .release(&ws(&second, Outdated::Keep))
         .expect("removed");
+}
+
+/// An environment gets the CPUs and memory it's created with, and is replaced with new ones
+/// when they change: as cgroup limits in Docker and Podman, as the VM's size in sbx and Apple
+/// containers, which may show a CPU more (Apple adds one for the VM) and a little less memory.
+fn resources(isolation: Isolation) {
+    let home = std::env::var("HOME").unwrap();
+    let base = Path::new(&home).join("worki");
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix(".e2e-")
+        .tempdir_in(&base)
+        .unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+
+    let backend = isolation.backend();
+    backend.ready().expect("engine available and running");
+    let ws = |cpus, memory_gb| Workspace {
+        repo: repo.clone(),
+        worktree_root: root.clone(),
+        worktree: Some(repo.clone()),
+        claude_dir: None,
+        claude_login_dir: None,
+        shared_folder: None,
+        resources: Resources {
+            cpus: Some(cpus),
+            memory_gb: Some(memory_gb),
+        },
+        outdated: Outdated::Replace,
+    };
+    let measured = || {
+        let (ok, out) = run(backend
+            .launch(&LaunchRequest {
+                cwd: repo.clone(),
+                command: Some(
+                    r#"q=$(cut -d" " -f1 /sys/fs/cgroup/cpu.max 2>/dev/null); p=$(cut -d" " -f2 /sys/fs/cgroup/cpu.max 2>/dev/null); m=$(cat /sys/fs/cgroup/memory.max 2>/dev/null); case "$q" in ''|max) c=$(nproc) ;; *) c=$((q / p)) ;; esac; case "$m" in ''|max) m=$(($(awk '/MemTotal/ {print $2}' /proc/meminfo) * 1024)) ;; esac; printf '%s %s\n' "$c" "$m""#.into(),
+                ),
+                interactive: false,
+                stdin: false,
+                env: vec![],
+                session: None,
+            })
+            .unwrap());
+        assert!(ok, "{out}");
+        let line = out.lines().last().unwrap_or_default().to_owned();
+        let mut fields = line.split_whitespace().map(|f| f.parse::<u64>().unwrap());
+        (
+            fields.next().unwrap(),
+            fields.next().unwrap() / 1024 / 1024 / 1024,
+        )
+    };
+
+    backend.grant_access(&ws(2, 3)).expect("created");
+    let (cpus, gb) = measured();
+    println!("asked for 2 CPUs and 3 GB, got {cpus} CPUs and about {gb} GB");
+    assert!((2..=3).contains(&cpus), "{cpus} CPUs");
+    assert!((2..=3).contains(&gb), "{gb} GB");
+
+    backend.grant_access(&ws(3, 5)).expect("replaced");
+    let (cpus, gb) = measured();
+    println!("asked for 3 CPUs and 5 GB, got {cpus} CPUs and about {gb} GB");
+    assert!((3..=4).contains(&cpus), "{cpus} CPUs");
+    assert!((4..=5).contains(&gb), "{gb} GB");
+
+    backend.release(&ws(3, 5)).expect("removed");
+}
+
+#[test]
+#[ignore = "needs Apple's container services running"]
+fn apple_container_resources() {
+    pull("container");
+    resources(Isolation::AppleContainer {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Docker Desktop running"]
+fn docker_resources() {
+    pull("docker");
+    resources(Isolation::Docker {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs a running Podman machine"]
+fn podman_resources() {
+    pull("podman");
+    resources(Isolation::Podman {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Docker Sandboxes (sbx)"]
+fn sbx_resources() {
+    resources(Isolation::DockerSandbox { template: None });
 }
 
 #[test]
@@ -490,6 +615,7 @@ fn claude_files_and_project_folder(isolation: Isolation) {
         claude_dir: Some(dir.to_path_buf()),
         claude_login_dir: Some(login.clone()),
         shared_folder: shared_folder.then(|| shared.clone()),
+        resources: Resources::default(),
         outdated,
     };
     let in_env = |wt: &Path, command: &str| {
@@ -620,6 +746,15 @@ fn sbx_claude_files_and_project_folder() {
 fn podman_claude_files_and_project_folder() {
     pull("podman");
     claude_files_and_project_folder(Isolation::Podman {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Apple's container services running"]
+fn apple_container_claude_files_and_project_folder() {
+    pull("container");
+    claude_files_and_project_folder(Isolation::AppleContainer {
         image: TEST_IMAGE.into(),
     });
 }

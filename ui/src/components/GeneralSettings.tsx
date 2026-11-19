@@ -1,16 +1,13 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, RefreshCw } from "lucide-react";
-import { useState } from "react";
 
-import { api, errorMessage } from "../lib/api";
-import { keys, useIsolationSettings } from "../lib/queries";
+import { errorMessage } from "../lib/api";
+import { useIsolationSettings, useUpdateIsolationSettings } from "../lib/queries";
 import { useKeepAwake } from "../lib/awake";
 import { useUi } from "../lib/store";
 import { checkForUpdates, useUpdates } from "../lib/updates";
 import { Button, Checkbox, ErrorText, Group } from "./ui";
 
 export function GeneralSettings() {
-  const qc = useQueryClient();
   const autoUpdate = useUi((s) => s.autoUpdate);
   const setAutoUpdate = useUi((s) => s.setAutoUpdate);
   const updates = useUpdates();
@@ -18,18 +15,7 @@ export function GeneralSettings() {
   const setReopen = useUi((s) => s.setReopenSessions);
   const [keepAwake, setKeepAwake] = useKeepAwake();
   const { data: isolation } = useIsolationSettings();
-  const [error, setError] = useState<string | null>(null);
-
-  async function setStopOnQuit(stopOnQuit: boolean) {
-    if (!isolation) return;
-    try {
-      await api.saveIsolationSettings({ ...isolation, stopOnQuit });
-      setError(null);
-      await qc.invalidateQueries({ queryKey: keys.isolationSettings });
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }
+  const updateIsolation = useUpdateIsolationSettings();
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
@@ -80,12 +66,12 @@ export function GeneralSettings() {
           </Checkbox>
           <Checkbox
             checked={isolation?.stopOnQuit ?? false}
-            onChange={setStopOnQuit}
-            hint="Off: Docker, Podman and sandbox environments keep running, so sessions start faster next time. On: they're stopped to free memory and started again when a session needs them."
+            onChange={(stopOnQuit) => updateIsolation.mutate({ stopOnQuit })}
+            hint="Off: Docker, Podman, Apple container and sandbox environments keep running, so sessions start faster next time. On: they're stopped to free memory and started again when a session needs them."
           >
             <span className="text-[13px]">Stop containers when worki quits</span>
           </Checkbox>
-          <ErrorText>{error}</ErrorText>
+          <ErrorText>{updateIsolation.error && errorMessage(updateIsolation.error)}</ErrorText>
         </Group>
       </div>
     </section>

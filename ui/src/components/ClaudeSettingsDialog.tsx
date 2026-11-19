@@ -94,7 +94,7 @@ export function ClaudeSettingsDialog({ settings, onClose }: { settings: JsonObje
     >
       <p className="text-xs leading-relaxed text-muted">
         Passed as written with <span className="font-mono">--settings</span> to sessions in User Isolation, Docker
-        Sandboxes, Docker and Podman, not over SSH or without isolation. In terminals, worki also adds its status{" "}
+        Sandboxes, Docker, Podman and Apple containers, not over SSH or without isolation. In terminals, worki also adds its status{" "}
         <span className="font-mono">hooks</span> and <span className="font-mono">statusLine</span>, and{" "}
         <span className="font-mono">remoteControlAtStartup</span> when Remote Control is on.
       </p>

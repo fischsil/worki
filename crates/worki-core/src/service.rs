@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::config::RepoConfig;
 use crate::model::*;
-use worki_isolation::{Backend, LaunchRequest, Outdated, Workspace};
+use worki_isolation::{Backend, LaunchRequest, Outdated, Resources, Workspace};
 
 use crate::openers::{self, OpenerSettings};
 use crate::setup::{run_captured, run_logged};
@@ -361,6 +361,7 @@ impl ProjectService {
     /// Takes effect in each worktree's environment at its next session start while nothing runs
     /// in it (see [`Self::grant_access_with`]).
     pub fn set_project_environment(&self, project_id: &str, env: ProjectEnvironment) -> Result<()> {
+        env.resources.validate().map_err(Error::isolation)?;
         let mut all: BTreeMap<String, ProjectEnvironment> =
             self.setting(PROJECT_ENVIRONMENTS_KEY)?;
         if env == ProjectEnvironment::default() {
@@ -788,6 +789,7 @@ impl ProjectService {
     }
 
     pub fn save_isolation_settings(&self, settings: &IsolationSettings) -> Result<()> {
+        settings.resources.validate().map_err(Error::isolation)?;
         self.store.set_setting(ISOLATION_SETTINGS_KEY, settings)
     }
 
@@ -885,6 +887,7 @@ impl ProjectService {
             Isolation::DockerSandbox { template } => ProjectIsolation::DockerSandbox { template },
             Isolation::Docker { image } => ProjectIsolation::Docker { image },
             Isolation::Podman { image } => ProjectIsolation::Podman { image },
+            Isolation::AppleContainer { image } => ProjectIsolation::AppleContainer { image },
             other => {
                 return Err(Error::Isolation(format!(
                     "{} can't be a project default",
@@ -1081,6 +1084,7 @@ impl ProjectService {
             claude_dir: None,
             claude_login_dir: None,
             shared_folder: None,
+            resources: Default::default(),
             outdated: Outdated::Keep,
         }
     }
@@ -1115,9 +1119,16 @@ impl ProjectService {
         if isolation != Isolation::None {
             let backend = isolation.backend();
             home = self.claude_home(project, worktree, &isolation)?;
-            let shared_folder = (isolation.is_container()
-                && self.project_environment(&project.id)?.shared_folder)
+            let environment = self.project_environment(&project.id)?;
+            let shared_folder = (isolation.is_container() && environment.shared_folder)
                 .then(|| paths::project_shared_dir(&project.id));
+            let resources = if isolation.is_container() {
+                environment
+                    .resources
+                    .or(self.isolation_settings()?.resources)
+            } else {
+                Resources::default()
+            };
             if let Some(dir) = &shared_folder {
                 std::fs::create_dir_all(dir)?;
             }
@@ -1126,6 +1137,7 @@ impl ProjectService {
                 claude_login_dir: home.as_ref().and_then(|h| h.login_dir.clone()),
                 claude_dir: home.as_ref().map(|h| h.dir.clone()),
                 shared_folder,
+                resources,
                 ..Self::workspace(project, worktree)
             };
             blocking(move || backend.grant_access(&ws)).await?;

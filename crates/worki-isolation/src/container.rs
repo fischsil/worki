@@ -1,7 +1,7 @@
-//! Container isolation: one container (or Docker Sandboxes microVM) per worktree, run by `sbx`,
-//! `docker` or `podman`. Folders are bind-mounted at the same absolute path, so git worktree
-//! pointers resolve unchanged inside; git metadata that could make the human's own git run
-//! agent-written code is mounted read-only.
+//! Container isolation: one container (or Docker Sandboxes or Apple container microVM) per
+//! worktree, run by `sbx`, `docker`, `podman` or Apple's `container`. Folders are bind-mounted at
+//! the same absolute path, so git worktree pointers resolve unchanged inside; git metadata that
+//! could make the human's own git run agent-written code is mounted read-only.
 
 use crate::trace::Traced;
 use std::ffi::OsStr;
@@ -16,14 +16,14 @@ use serde_json::Value;
 use crate::{
     check_output, command_path, ensure_relative, ensure_valid_env, file_contents, home_path,
     host_which, pack_home_files, stderr_text, Backend, Check, Fix, Isolation, Launch,
-    LaunchRequest, Outdated, Template, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT,
+    LaunchRequest, Outdated, Resources, Template, Workspace, PROJECT_FOLDER, READ_FILE_SCRIPT,
     WRITE_FILE_SCRIPT,
 };
 
 /// sbx's kit for every sandbox: agents are installed on first use, not taken from sbx's agent
 /// kits, whose proxy signs Claude Code in with sbx's own login over the account's.
 pub const SANDBOX_KIT: &str = "shell";
-/// Built locally by "Set up" for Docker and Podman.
+/// Built locally by "Set up" for Docker, Podman and Apple containers.
 pub const DEFAULT_CONTAINER_IMAGE: &str = "worki-agent:1";
 const AGENT_CONTAINERFILE: &str = include_str!("worki-agent.Containerfile");
 
@@ -41,14 +41,19 @@ pub enum Engine {
     Docker,
     /// Containers in a Podman machine VM.
     Podman,
+    /// Apple's `container`: a lightweight VM per container (Virtualization.framework).
+    Apple,
 }
 
 impl Engine {
+    const ALL: [Engine; 4] = [Engine::Sbx, Engine::Docker, Engine::Podman, Engine::Apple];
+
     fn program(self) -> &'static str {
         match self {
             Engine::Sbx => "sbx",
             Engine::Docker => "docker",
             Engine::Podman => "podman",
+            Engine::Apple => "container",
         }
     }
 
@@ -57,6 +62,7 @@ impl Engine {
             Engine::Sbx => "Docker Sandboxes (sbx)",
             Engine::Docker => "Docker",
             Engine::Podman => "Podman",
+            Engine::Apple => "Apple containers",
         }
     }
 
@@ -131,7 +137,7 @@ impl Container {
     /// Removes the worktree's environments from every installed, running engine, whichever
     /// isolation created them. Returns one message per engine that failed.
     pub fn release_everywhere(ws: &Workspace) -> Vec<String> {
-        [Engine::Sbx, Engine::Docker, Engine::Podman]
+        Engine::ALL
             .into_iter()
             .map(|engine| Self::new(engine, String::new()))
             .filter(|c| c.engine.binary().is_ok() && c.engine_running())
@@ -261,7 +267,11 @@ impl Container {
         let args = ["rm", force]
             .into_iter()
             .chain(names.iter().map(String::as_str));
-        self.checked(args, what).map(drop)
+        self.checked(args, what)?;
+        for name in names {
+            self.clear_pins(name);
+        }
+        Ok(())
     }
 
     /// The listing of `ws`'s worktree's environment, if it has one.
@@ -275,6 +285,9 @@ impl Container {
             Engine::Sbx => {
                 parse_sbx_listing(&self.checked(["ls", "--json"], "listing sandboxes")?)?
             }
+            Engine::Apple => parse_apple_listing(
+                &self.checked(["ls", "-a", "--format", "json"], "listing containers")?,
+            )?,
             _ => parse_ps_listing(&self.checked(
                 [
                     "ps",
@@ -309,6 +322,8 @@ impl Container {
             remapped.push(format!("{}:{PROJECT_FOLDER}", shared.display()));
             env.push(format!("{SHARED_FOLDER_ENV}={PROJECT_FOLDER}"));
         }
+        env.push(format!("{RESOURCES_ENV}={}", resources_mark(ws.resources)));
+        let resource_args = self.resource_args(ws.resources);
         let mut args: Vec<String> = Vec::new();
         match self.engine {
             Engine::Sbx => {
@@ -327,6 +342,7 @@ impl Container {
                 for env in env {
                     args.extend(["--env".into(), env]);
                 }
+                args.extend(resource_args);
                 args.push(self.image.clone());
                 args.extend(mounts.iter().map(Mount::sbx_arg));
                 args.extend(remapped);
@@ -337,8 +353,9 @@ impl Container {
                     "--label".into(),
                     format!("worki.workdir={}", worktree.display()),
                 ]);
-                for m in &mounts {
-                    args.extend(["-v".into(), m.volume_arg()]);
+                self.clear_pins(name);
+                for (i, m) in mounts.iter().enumerate() {
+                    args.extend(["-v".into(), self.volume_arg(name, i, m)?]);
                 }
                 for mount in remapped {
                     args.extend(["-v".into(), mount]);
@@ -346,6 +363,7 @@ impl Container {
                 for env in env {
                     args.extend(["-e".into(), env]);
                 }
+                args.extend(resource_args);
                 args.extend([
                     "-w".into(),
                     worktree.display().to_string(),
@@ -355,7 +373,11 @@ impl Container {
                 ]);
             }
         }
-        match self.checked(&args, &format!("creating the {}", self.engine.noun())) {
+        let created = self.checked(&args, &format!("creating the {}", self.engine.noun()));
+        if created.is_err() {
+            self.clear_pins(name);
+        }
+        match created {
             Ok(_) if self.engine == Engine::Sbx => self.start(name),
             Ok(_) => Ok(()),
             Err(e) if policy_missing(&format!("{e:#}")) => bail!(
@@ -415,11 +437,27 @@ impl Container {
         Ok(child.wait_with_output()?)
     }
 
+    /// `--cpus` and `-m` for creating an environment.
+    fn resource_args(&self, resources: Resources) -> Vec<String> {
+        let mut args = Vec::new();
+        if let Some(cpus) = resources.cpus {
+            args.extend(["--cpus".into(), cpus.to_string()]);
+        }
+        let memory_gb = match self.engine {
+            Engine::Apple => resources.memory_gb.or(Some(APPLE_MEMORY_GB)),
+            _ => resources.memory_gb,
+        };
+        if let Some(gb) = memory_gb {
+            args.extend(["-m".into(), format!("{gb}g")]);
+        }
+        args
+    }
+
     /// What the bound environment was created with, or `None` when it can't be told.
     fn made_with(&self) -> Option<MadeWith> {
         const MARK: &str = "worki-made-with:";
         let script = format!(
-            r#"bash -lc 'printf "\n{MARK}%s\t%s\t%s\n" "${CONFIG_DIR_ENV}" "${LOGIN_DIR_ENV}" "${SHARED_FOLDER_ENV}"'"#
+            r#"bash -lc 'printf "\n{MARK}%s\t%s\t%s\t%s\n" "${CONFIG_DIR_ENV}" "${LOGIN_DIR_ENV}" "${SHARED_FOLDER_ENV}" "${RESOURCES_ENV}"'"#
         );
         let out = self
             .sh(&script, &[], None)
@@ -431,10 +469,12 @@ impl Container {
             .find_map(|l| l.strip_prefix(MARK))?
             .split('\t');
         let mut path = || fields.next().filter(|p| !p.is_empty()).map(PathBuf::from);
+        let (claude_dir, claude_login_dir, shared_folder) = (path(), path(), path().is_some());
         Some(MadeWith {
-            claude_dir: path(),
-            claude_login_dir: path(),
-            shared_folder: path().is_some(),
+            claude_dir,
+            claude_login_dir,
+            shared_folder,
+            resources: parse_resources_mark(fields.next().unwrap_or_default()),
         })
     }
 
@@ -477,6 +517,32 @@ impl Container {
             })
     }
 
+    /// `container system status --format json`, when the services run.
+    fn apple_status(&self) -> Option<Value> {
+        let out = self
+            .checked(
+                ["system", "status", "--format", "json"],
+                "checking the services",
+            )
+            .ok()?;
+        Some(serde_json::from_str(&out).unwrap_or(Value::Null))
+    }
+
+    /// Apple's mounts of single files, read-only from copies (see [`apple_pinned_copy`]).
+    fn volume_arg(&self, container: &str, index: usize, mount: &Mount) -> Result<String> {
+        if self.engine == Engine::Apple && mount.read_only && mount.path.is_file() {
+            apple_pinned_copy(container, index, mount)
+        } else {
+            Ok(mount.volume_arg())
+        }
+    }
+
+    fn clear_pins(&self, container: &str) {
+        if self.engine == Engine::Apple {
+            std::fs::remove_dir_all(apple_pin_dir(container)).ok();
+        }
+    }
+
     fn engine_running(&self) -> bool {
         let Ok(mut cmd) = self.command() else {
             return false;
@@ -487,6 +553,7 @@ impl Container {
                 .traced()
                 .output()
                 .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("running")),
+            Engine::Apple => self.apple_status().is_some(),
             _ => cmd
                 .arg("info")
                 .stdout(Stdio::null())
@@ -695,8 +762,68 @@ fn parse_ps_listing(text: &str) -> Result<Vec<Listed>> {
         .collect())
 }
 
+/// `container ls --format json`: a list of `{id, configuration: {id, labels}, status}`, where
+/// `status` is `{state}` since 1.x and a plain string before.
+fn parse_apple_listing(text: &str) -> Result<Vec<Listed>> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let items: Vec<Value> =
+        serde_json::from_str(trimmed).context("unexpected `container ls --format json` output")?;
+    Ok(items
+        .iter()
+        .filter_map(|c| {
+            let config = &c["configuration"];
+            let name = config["id"].as_str().or(c["id"].as_str())?.to_owned();
+            let state = c["status"]["state"]
+                .as_str()
+                .or(c["status"].as_str())
+                .unwrap_or_default();
+            let workdir = config["labels"]["worki.workdir"]
+                .as_str()
+                .map(PathBuf::from);
+            Some(Listed {
+                name,
+                running: state.eq_ignore_ascii_case("running"),
+                workdir,
+            })
+        })
+        .collect())
+}
+
+/// `container image ls --format json`: a list of `{configuration: {name, creationDate},
+/// variants: [{size}]}`. Dates are RFC 3339, or seconds since 2001 from older versions.
+fn parse_apple_image_listing(text: &str) -> Vec<Template> {
+    const SINCE_2001: i64 = 978_307_200;
+    let Ok(items) = serde_json::from_str::<Vec<Value>>(text.trim()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|i| {
+            let config = &i["configuration"];
+            let name = config["name"].as_str()?.to_owned();
+            let created = match &config["creationDate"] {
+                Value::String(s) => parse_created(s),
+                Value::Number(n) => n.as_f64().map(|s| s as i64 + SINCE_2001),
+                _ => None,
+            };
+            let size = i["variants"]
+                .as_array()
+                .map(|v| v.iter().filter_map(|v| v["size"].as_u64()).sum())
+                .filter(|&s| s > 0);
+            Some(Template {
+                name,
+                created,
+                size,
+            })
+        })
+        .collect()
+}
+
 /// Stable environment name for a worktree: readable part from the folder name, uniqueness from
-/// a hash of the full path. Valid for sbx, Docker and Podman (letters, digits, `-`).
+/// a hash of the full path. Valid for every engine (letters, digits, `-`).
 pub fn sandbox_name(worktree: &Path) -> String {
     let base: String = worktree
         .file_name()
@@ -747,6 +874,8 @@ const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 const LOGIN_DIR_ENV: &str = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
 /// Where the project's shared folder is, in environments that have one.
 const SHARED_FOLDER_ENV: &str = "WORKI_PROJECT_DIR";
+/// The CPUs and memory worki asked for when creating the environment.
+const RESOURCES_ENV: &str = "WORKI_RESOURCES";
 
 /// Claude Code's config and login folders, made if missing, as writable mounts with the variable
 /// that points Claude Code at each.
@@ -773,6 +902,7 @@ struct MadeWith {
     claude_dir: Option<PathBuf>,
     claude_login_dir: Option<PathBuf>,
     shared_folder: bool,
+    resources: Resources,
 }
 
 impl MadeWith {
@@ -781,8 +911,30 @@ impl MadeWith {
             claude_dir: ws.claude_dir.clone(),
             claude_login_dir: ws.claude_login_dir.clone(),
             shared_folder: ws.shared_folder.is_some(),
+            resources: ws.resources,
         }
     }
+}
+
+/// `cpus=4,memory=8`, leaving out unset ones. Environments from before this was recorded read as
+/// unset, so they're only replaced once resources are set.
+fn resources_mark(resources: Resources) -> String {
+    let mut parts = Vec::new();
+    parts.extend(resources.cpus.map(|c| format!("cpus={c}")));
+    parts.extend(resources.memory_gb.map(|m| format!("memory={m}")));
+    parts.join(",")
+}
+
+fn parse_resources_mark(mark: &str) -> Resources {
+    let mut resources = Resources::default();
+    for part in mark.split(',') {
+        match part.trim().split_once('=') {
+            Some(("cpus", v)) => resources.cpus = v.parse().ok(),
+            Some(("memory", v)) => resources.memory_gb = v.parse().ok(),
+            _ => {}
+        }
+    }
+    resources
 }
 
 /// The worktree writable, and of the repository's `.git` only what committing and fetching
@@ -978,6 +1130,51 @@ fn parse_created(text: &str) -> Option<i64> {
     Some(days * 86_400 + h * 3600 + min * 60 + sec - offset)
 }
 
+fn apple_pin_dir(container: &str) -> PathBuf {
+    crate::data_dir().join("apple-pins").join(container)
+}
+
+/// Apple's services run without a kernel, but no container can boot until one is set: a
+/// `default.kernel-<arch>` link in the app root's `kernels` folder. A status without the app
+/// root counts as installed, so an unexpected answer doesn't block anything.
+fn apple_kernel_installed(status: &Value) -> bool {
+    let Some(root) = status["paths"]["appRoot"].as_str() else {
+        return true;
+    };
+    Path::new(root)
+        .join("kernels")
+        .join(format!("default.kernel-{}", apple_arch()))
+        .exists()
+}
+
+/// Apple's `container` shares a file by sharing its whole folder, and that share replaces a
+/// writable mount of the same folder (the worktree, or its admin folder under `.git`). So a
+/// read-only file is mounted from a copy in a folder of worki's own instead.
+fn apple_pinned_copy(container: &str, index: usize, mount: &Mount) -> Result<String> {
+    let dir = apple_pin_dir(container);
+    std::fs::create_dir_all(&dir)?;
+    let file_name = mount
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let copy = dir.join(format!("{index}-{file_name}"));
+    std::fs::copy(&mount.path, &copy)
+        .with_context(|| format!("copying {} for the container", mount.path.display()))?;
+    Ok(format!("{}:{}:ro", copy.display(), mount.path.display()))
+}
+
+fn apple_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "amd64"
+    } else {
+        "arm64"
+    }
+}
+
+/// Each Apple container is a VM with 1 GB by default, too little for agents running builds.
+const APPLE_MEMORY_GB: u32 = 4;
+
 const PROBE_HOST: &str = "api.anthropic.com";
 const PROBE_TIMEOUT_SECS: u32 = 12;
 /// Claude Code gives up on a connection after 10 seconds and makes several in a row.
@@ -1053,7 +1250,7 @@ pub fn account_login_dir(account_dir: &Path) -> Result<PathBuf> {
 }
 
 /// Runs `command` with `config` as Claude Code's config folder and, when given, `login` as where
-/// it keeps its login, in a throwaway container with Docker, else Podman.
+/// it keeps its login, in a throwaway container with Docker, else Podman, else Apple's.
 pub fn account_launch(
     config: &Path,
     login: Option<&Path>,
@@ -1061,11 +1258,14 @@ pub fn account_launch(
     interactive: bool,
 ) -> Result<AccountRun> {
     static RUNS: AtomicU64 = AtomicU64::new(0);
-    let engine = [Engine::Docker, Engine::Podman]
+    let engine = Engine::ALL
         .into_iter()
+        .filter(|&engine| engine != Engine::Sbx)
         .map(|engine| Container::new(engine, DEFAULT_CONTAINER_IMAGE.into()))
         .find(|c| c.engine.binary().is_ok() && c.engine_running() && c.image_present())
-        .context("accounts sign in with Docker or Podman: open Isolation and set one up")?;
+        .context(
+            "accounts sign in with Docker, Podman or Apple containers: open Isolation and set one up",
+        )?;
     let name = format!(
         "worki_account-{}-{}",
         std::process::id(),
@@ -1134,18 +1334,29 @@ fn exec_args(name: &str, req: &LaunchRequest) -> Vec<String> {
     args
 }
 
+impl Container {
+    /// This engine's isolation with `image` (for sbx, the template new sandboxes start from).
+    fn isolation_with(&self, image: Option<String>) -> Isolation {
+        match self.engine {
+            Engine::Sbx => Isolation::DockerSandbox { template: image },
+            Engine::Docker => Isolation::Docker {
+                image: image.unwrap_or_default(),
+            },
+            Engine::Podman => Isolation::Podman {
+                image: image.unwrap_or_default(),
+            },
+            Engine::Apple => Isolation::AppleContainer {
+                image: image.unwrap_or_default(),
+            },
+        }
+    }
+}
+
 impl Backend for Container {
     fn isolation(&self) -> Isolation {
         match self.engine {
-            Engine::Sbx => Isolation::DockerSandbox {
-                template: self.template.clone(),
-            },
-            Engine::Docker => Isolation::Docker {
-                image: self.image.clone(),
-            },
-            Engine::Podman => Isolation::Podman {
-                image: self.image.clone(),
-            },
+            Engine::Sbx => self.isolation_with(self.template.clone()),
+            _ => self.isolation_with(Some(self.image.clone())),
         }
     }
 
@@ -1188,8 +1399,9 @@ impl Backend for Container {
                 Outdated::Keep => return Ok(()),
                 _ if !outdated() => return Ok(()),
                 Outdated::Refuse => bail!(
-                    "this worktree's {} was set up for other Claude Code sign-in or folders than \
-                     the project's now, and sessions still run in it. Close them, then start again",
+                    "this worktree's {} was set up for other Claude Code sign-in, folders or \
+                     resources than the project's now, and sessions still run in it. Close them, \
+                     then start again",
                     self.engine.noun()
                 ),
                 Outdated::Replace => {}
@@ -1231,17 +1443,7 @@ impl Backend for Container {
             &args,
             &format!("saving a snapshot of the {} as {tag}", self.engine.noun()),
         )?;
-        Ok(match self.engine {
-            Engine::Sbx => Isolation::DockerSandbox {
-                template: Some(tag.to_owned()),
-            },
-            Engine::Docker => Isolation::Docker {
-                image: tag.to_owned(),
-            },
-            Engine::Podman => Isolation::Podman {
-                image: tag.to_owned(),
-            },
-        })
+        Ok(self.isolation_with(Some(tag.to_owned())))
     }
 
     fn templates(&self) -> Result<Vec<String>> {
@@ -1262,6 +1464,9 @@ impl Backend for Container {
         let tags = match self.engine {
             Engine::Sbx => parse_template_listing(
                 &self.checked(["template", "ls", "--json"], "listing templates")?,
+            ),
+            Engine::Apple => parse_apple_image_listing(
+                &self.checked(["image", "ls", "--format", "json"], "listing images")?,
             ),
             _ => self
                 .checked(
@@ -1393,6 +1598,25 @@ impl Backend for Container {
             Engine::Podman => self
                 .checked(["machine", "start"], "starting the Podman machine")
                 .map(drop),
+            Engine::Apple => {
+                let status = match self.apple_status() {
+                    Some(status) => status,
+                    None => {
+                        self.checked(
+                            ["system", "start", "--disable-kernel-install"],
+                            "starting the container services",
+                        )?;
+                        self.apple_status().unwrap_or(Value::Null)
+                    }
+                };
+                if !apple_kernel_installed(&status) {
+                    self.checked(
+                        ["system", "kernel", "set", "--recommended"],
+                        "installing the Linux kernel for containers",
+                    )?;
+                }
+                Ok(())
+            }
             Engine::Docker => bail!("Start Docker Desktop, then re-run the checks."),
         }
     }
@@ -1412,7 +1636,7 @@ impl Backend for Container {
         let file = dir.join("Containerfile");
         std::fs::write(&file, AGENT_CONTAINERFILE)?;
         let mut args = vec!["build".to_string()];
-        if self.engine == Engine::Docker {
+        if matches!(self.engine, Engine::Docker | Engine::Apple) {
             args.push("--progress=plain".into());
         }
         args.extend([
@@ -1449,17 +1673,27 @@ impl Backend for Container {
                     Engine::Podman => {
                         "Install Podman: https://podman.io (e.g. `brew install podman`)".into()
                     }
+                    Engine::Apple => "Install it from https://github.com/apple/container/releases \
+                         (needs a Mac with Apple silicon and macOS 26)"
+                        .into(),
                 },
             }),
         );
         if binary.is_err() {
             return checks;
         }
-        let running = self.engine_running();
+        let apple_status = (self.engine == Engine::Apple)
+            .then(|| self.apple_status())
+            .flatten();
+        let running = match self.engine {
+            Engine::Apple => apple_status.is_some(),
+            _ => self.engine_running(),
+        };
         let what = match self.engine {
             Engine::Sbx => "The sandbox daemon",
             Engine::Docker => "Docker",
             Engine::Podman => "The Podman machine",
+            Engine::Apple => "The container services",
         };
         let mut check = Check::new(
             "running",
@@ -1493,6 +1727,21 @@ impl Backend for Container {
             );
             checks.push(self.sbx_compatibility());
         }
+        if let Some(status) = &apple_status {
+            checks.push(
+                Check::new(
+                    "kernel",
+                    apple_kernel_installed(status),
+                    "A Linux kernel is installed for containers",
+                    "No Linux kernel is installed for containers",
+                )
+                .detail(
+                    "Containers can't start without one. Set up installs Apple's recommended kernel, \
+                     like `container system kernel set --recommended`.",
+                )
+                .fix_if_failed(Fix::Provision),
+            );
+        }
         if self.engine != Engine::Sbx {
             let present = self.image_present();
             let mut check = Check::new(
@@ -1506,8 +1755,12 @@ impl Backend for Container {
                     .detail("worki's agent image: Alpine with git, gh, ripgrep and Claude Code. Building takes a minute or two.")
                     .fix_if_failed(Fix::BuildImage);
             } else if !present {
+                let pull = match self.engine {
+                    Engine::Apple => "image pull",
+                    _ => "pull",
+                };
                 check = check.detail(format!(
-                    "Pull it with `{} pull {}`.",
+                    "Pull it with `{} {pull} {}`.",
                     self.engine.program(),
                     self.image
                 ));
@@ -1652,6 +1905,7 @@ mod tests {
             claude_dir: Some("/own".into()),
             claude_login_dir: Some("/acct".into()),
             shared_folder: Some("/shared".into()),
+            resources: Resources::default(),
             outdated: Outdated::Replace,
         };
         let made = MadeWith::of(&ws);
@@ -1669,9 +1923,47 @@ mod tests {
                 claude_login_dir: Some("/other".into()),
                 ..ws.clone()
             },
+            Workspace {
+                resources: Resources {
+                    cpus: None,
+                    memory_gb: Some(8),
+                },
+                ..ws.clone()
+            },
         ] {
             assert_ne!(made, MadeWith::of(&changed));
         }
+    }
+
+    #[test]
+    fn resources_survive_the_mark_and_old_environments_read_as_unset() {
+        for resources in [
+            Resources::default(),
+            Resources {
+                cpus: Some(6),
+                memory_gb: None,
+            },
+            Resources {
+                cpus: Some(2),
+                memory_gb: Some(16),
+            },
+        ] {
+            assert_eq!(parse_resources_mark(&resources_mark(resources)), resources);
+        }
+        assert_eq!(parse_resources_mark(""), Resources::default());
+    }
+
+    #[test]
+    fn resource_args_per_engine() {
+        let set = Resources {
+            cpus: Some(6),
+            memory_gb: Some(8),
+        };
+        let docker = Container::new(Engine::Docker, "i".into());
+        assert_eq!(docker.resource_args(set), ["--cpus", "6", "-m", "8g"]);
+        assert!(docker.resource_args(Resources::default()).is_empty());
+        let apple = Container::new(Engine::Apple, "i".into());
+        assert_eq!(apple.resource_args(Resources::default()), ["-m", "4g"]);
     }
 
     #[test]
@@ -2029,5 +2321,48 @@ mod tests {
         );
         assert!(parse_ps_listing("").unwrap().is_empty());
         assert!(parse_ps_listing("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parses_apple_container_listings() {
+        let current = r#"[
+  {"id":"worki-a-1","configuration":{"id":"worki-a-1","labels":{"worki.workdir":"/w/a"}},"status":{"state":"running","networks":[]}},
+  {"id":"worki-b-2","configuration":{"id":"worki-b-2","labels":{}},"status":{"state":"stopped","networks":[]}}
+]"#;
+        assert_eq!(
+            parse_apple_listing(current).unwrap(),
+            vec![
+                Listed {
+                    name: "worki-a-1".into(),
+                    running: true,
+                    workdir: Some("/w/a".into())
+                },
+                Listed {
+                    name: "worki-b-2".into(),
+                    running: false,
+                    workdir: None
+                },
+            ]
+        );
+
+        let older = r#"[{"configuration":{"id":"worki-c-3","labels":{"worki.workdir":"/w/c"}},"status":"running"}]"#;
+        assert!(parse_apple_listing(older).unwrap()[0].running);
+        assert!(parse_apple_listing("").unwrap().is_empty());
+        assert!(parse_apple_listing("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parses_apple_image_listings() {
+        let json = r#"[
+  {"id":"abc","configuration":{"name":"docker.io/library/worki-agent:1","creationDate":"2026-11-04T10:12:00Z","descriptor":{}},"variants":[{"size":1000},{"size":500}]},
+  {"id":"def","configuration":{"name":"worki-snap:1","creationDate":815054400,"descriptor":{}},"variants":[]}
+]"#;
+        let images = parse_apple_image_listing(json);
+        assert_eq!(images[0].name, "docker.io/library/worki-agent:1");
+        assert_eq!(images[0].created, parse_created("2026-11-04T10:12:00Z"));
+        assert_eq!(images[0].size, Some(1500));
+        assert_eq!(images[1].created, Some(815_054_400 + 978_307_200));
+        assert_eq!(images[1].size, None);
+        assert!(parse_apple_image_listing("not json").is_empty());
     }
 }

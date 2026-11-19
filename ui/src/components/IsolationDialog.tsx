@@ -4,11 +4,12 @@ import { LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, errorMessage, type Isolation, type LocalIsolation, isContainer } from "../lib/api";
-import { keys, useAgentSettings, useDoctor, useIsolationSettings } from "../lib/queries";
+import { keys, useAgentSettings, useDoctor, useIsolationSettings, useUpdateIsolationSettings } from "../lib/queries";
 import { AgentsPanel } from "./AgentsPanel";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
-import { Button, Dialog, ErrorText } from "./ui";
+import { ResourceFields } from "./ResourceFields";
+import { Button, Dialog, ErrorText, Group } from "./ui";
 
 export function IsolationDialog({ current, onClose }: { current: Isolation; onClose: () => void }) {
   const qc = useQueryClient();
@@ -20,8 +21,8 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
   const userExists = isolation.kind === "macUser" && !!checks?.find((c) => c.id === "user")?.ok;
   const [removing, setRemoving] = useState(false);
   const { data: settings } = useIsolationSettings();
+  const { mutate: updateSettings, error: updateError } = useUpdateIsolationSettings();
   const { data: agentSettings } = useAgentSettings();
-  const stopOnQuit = settings?.stopOnQuit ?? false;
 
 
   async function removeUser() {
@@ -52,17 +53,9 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
   const pending = JSON.stringify(isolation) !== JSON.stringify(current);
   useEffect(() => {
     if (!pending || !valid || !ready || removing) return;
-    const timer = setTimeout(async () => {
-      try {
-        await api.saveIsolationSettings({ default: isolation, stopOnQuit });
-        setError(null);
-        await qc.invalidateQueries({ queryKey: keys.isolationSettings });
-      } catch (e) {
-        setError(errorMessage(e));
-      }
-    }, 400);
+    const timer = setTimeout(() => updateSettings({ default: isolation }), 400);
     return () => clearTimeout(timer);
-  }, [isolation, pending, valid, ready, removing, stopOnQuit, qc]);
+  }, [isolation, pending, valid, ready, removing, updateSettings]);
 
   return (
     <Dialog
@@ -95,7 +88,12 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
         <ErrorText>Use letters, digits, “_”, “.” or “-” (max 31 characters).</ErrorText>
       )}
       {!ready && valid && <p className="text-[13px] text-faint">Finish the setup above; the default changes once it's done.</p>}
-      <ErrorText>{error}</ErrorText>
+      {settings && (
+        <Group title="Container resources">
+          <ResourceFields value={settings.resources ?? {}} onChange={(resources) => updateSettings({ resources })} />
+        </Group>
+      )}
+      <ErrorText>{error ?? (updateError && errorMessage(updateError))}</ErrorText>
     </Dialog>
   );
 }

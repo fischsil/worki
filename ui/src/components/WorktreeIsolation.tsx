@@ -171,6 +171,8 @@ function shortIsolationLabel(i: Isolation): string {
       return "Docker";
     case "podman":
       return "Podman";
+    case "appleContainer":
+      return "Apple";
     case "ssh":
       return i.host;
   }

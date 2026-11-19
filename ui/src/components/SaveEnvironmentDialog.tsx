@@ -66,7 +66,7 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
     return (
       <Dialog title="Save environment snapshot" onClose={onClose} width={480} footer={<Button onClick={onClose}>Close</Button>}>
         <p className="text-[13px] leading-relaxed">
-          Only worktrees in Docker Sandboxes, Docker or Podman have an environment that can be saved.
+          Only worktrees in Docker Sandboxes, Docker, Podman or Apple containers have an environment that can be saved.
           Change the isolation of this worktree or project to one of those first.
         </p>
       </Dialog>

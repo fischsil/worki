@@ -81,7 +81,7 @@ const SIGN_IN_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN";
 function AccountTokenNote() {
   return (
     <p className="text-xs text-faint">
-      Claude Code sessions of projects with an account in Docker Sandboxes, Docker or Podman sign in with the account
+      Claude Code sessions of projects with an account in Docker Sandboxes, Docker, Podman or Apple containers sign in with the account
       instead.
     </p>
   );

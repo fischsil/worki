@@ -31,6 +31,7 @@ import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
 import { ProjectAccount } from "./ProjectAccount";
 import { parseRemote, RemoteFields, remoteForm } from "./RemoteFields";
+import { ResourceFields } from "./ResourceFields";
 import { SecretsEditor } from "./SecretsEditor";
 import { type SettingsPage, SettingsWindow } from "./SettingsWindow";
 import {
@@ -262,9 +263,21 @@ export function ProjectSettingsDialog({ project, onClose }: { project: Project; 
                       )}
                     </div>
                     {!isContainer(effective) && (
-                      <InfoText>Only Docker Sandboxes, Docker and Podman containers get it.</InfoText>
+                      <InfoText>Only Docker Sandboxes, Docker, Podman and Apple containers get it.</InfoText>
                     )}
                   </div>
+                </Group>
+              )}
+              {!remote && environment && (
+                <Group title="Container resources">
+                  <ResourceFields
+                    value={environment.resources ?? {}}
+                    fallback={isolationSettings?.resources}
+                    onChange={(resources) => updateEnvironment.mutate({ resources })}
+                  />
+                  {!isContainer(effective) && (
+                    <InfoText>Only Docker Sandboxes, Docker, Podman and Apple containers use these.</InfoText>
+                  )}
                 </Group>
               )}
             </>

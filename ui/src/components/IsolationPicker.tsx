@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   DEFAULT_AGENT_USER,
   DEFAULT_CONTAINER_IMAGE,
+  hasImage,
   type Isolation,
   type ProjectIsolation,
 } from "../lib/api";
@@ -34,6 +35,11 @@ const options: { kind: Kind; label: string; hint: string }[] = [
     label: "Podman",
     hint: "Each worktree gets its own container in the Podman machine VM. Needs Podman.",
   },
+  {
+    kind: "appleContainer",
+    label: "Apple containers",
+    hint: "Each worktree gets its own container in a lightweight VM of its own. Needs Apple's container tool, a Mac with Apple silicon and macOS 26.",
+  },
 ];
 
 export function IsolationPicker<T extends ProjectIsolation>({
@@ -62,8 +68,8 @@ export function IsolationPicker<T extends ProjectIsolation>({
         ? { kind, user: DEFAULT_AGENT_USER }
         : kind === "dockerSandbox"
           ? { kind }
-          : kind === "docker" || kind === "podman"
-            ? { kind, image: DEFAULT_CONTAINER_IMAGE }
+          : hasImage({ kind } as ProjectIsolation)
+            ? ({ kind, image: DEFAULT_CONTAINER_IMAGE } as ProjectIsolation)
             : ({ kind } as ProjectIsolation);
     onChange(next as T);
   }
@@ -92,12 +98,12 @@ export function IsolationPicker<T extends ProjectIsolation>({
           />
         </Field>
       )}
-      {(value.kind === "docker" || value.kind === "podman") && (
+      {hasImage(value) && (
         <Field
           label="Image"
           hint={
             value.image === DEFAULT_CONTAINER_IMAGE
-              ? "worki's agent image (Debian, git, gh, node, Claude Code), built by Set up below."
+              ? "worki's agent image (Alpine, git, gh, ripgrep, Claude Code), built by Set up below."
               : "Any image with bash and git."
           }
         >

@@ -6,6 +6,7 @@ export type Isolation =
   | { kind: "dockerSandbox"; template?: string | null }
   | { kind: "docker"; image: string }
   | { kind: "podman"; image: string }
+  | { kind: "appleContainer"; image: string }
   | ({ kind: "ssh" } & Remote);
 /** Isolations for agents on this Mac. */
 export type LocalIsolation = Exclude<Isolation, { kind: "ssh" }>;
@@ -40,6 +41,14 @@ export function remoteLabel(r: Pick<Remote, "host" | "user" | "port">): string {
 export interface IsolationSettings {
   default: Isolation;
   stopOnQuit: boolean;
+  /** For new containers and sandboxes; projects can override each field. */
+  resources: Resources;
+}
+
+/** Unset fields use the engine's default. */
+export interface Resources {
+  cpus?: number | null;
+  memoryGb?: number | null;
 }
 
 export type Fix = "provision" | "prepare" | "grantAccess" | "buildImage";
@@ -53,7 +62,7 @@ export interface Check {
 }
 
 export const DEFAULT_AGENT_USER = "_worki";
-/** Built locally by Set up for Docker and Podman. */
+/** Built locally by Set up for Docker, Podman and Apple containers. */
 export const DEFAULT_CONTAINER_IMAGE = "worki-agent:1";
 
 export interface OpenerApp {
@@ -83,6 +92,7 @@ export function isolationLabel(i: Isolation): string {
   if (i.kind === "ssh") return `SSH · ${remoteLabel(i)}`;
   if (i.kind === "docker") return `Docker · ${i.image}`;
   if (i.kind === "podman") return `Podman · ${i.image}`;
+  if (i.kind === "appleContainer") return `Apple containers · ${i.image}`;
   return i.template ? `Docker Sandboxes · ${i.template}` : "Docker Sandboxes";
 }
 
@@ -253,7 +263,7 @@ export interface CommitDraft {
   files: string[];
 }
 
-export type SnapshotEngine = "dockerSandbox" | "docker" | "podman";
+export type SnapshotEngine = "dockerSandbox" | "docker" | "podman" | "appleContainer";
 
 /** A saved environment snapshot, with the settings that start new environments from it. */
 export interface Snapshot {
@@ -324,6 +334,8 @@ export interface ProjectEnvironment {
   sharedFolder: boolean;
   /** Whether the project's Claude Code settings, CLAUDE.md and skills are shared by its worktrees. */
   claudeFiles: FilesScope;
+  /** Over the global resources, field by field. */
+  resources: Resources;
 }
 
 /** A Claude Code login of worki's own that projects can pick; its email is read after signing in. */
@@ -336,9 +348,16 @@ export interface ClaudeAccount {
 
 export type LoginEvent = { kind: "url"; url: string } | { kind: "output"; line: string };
 
+type ImageIsolation = Extract<Isolation, { image: string }>;
+
+/** Container isolations that start from an image (Docker Sandboxes start from a template). */
+export function hasImage<T extends ProjectIsolation>(i: T | null | undefined): i is T & ImageIsolation {
+  return i?.kind === "docker" || i?.kind === "podman" || i?.kind === "appleContainer";
+}
+
 /** Each worktree gets its own container or sandbox, which can be snapshotted and share an account. */
 export function isContainer(i: Isolation | ProjectIsolation | null | undefined): boolean {
-  return i?.kind === "dockerSandbox" || i?.kind === "docker" || i?.kind === "podman";
+  return i?.kind === "dockerSandbox" || hasImage(i as ProjectIsolation | null | undefined);
 }
 
 export type JsonObject = { [key: string]: unknown };
@@ -347,7 +366,7 @@ export function scopeKey(i: Isolation): string {
   if (i.kind === "none") return "none";
   if (i.kind === "macUser") return `macUser:${i.user}`;
   if (i.kind === "ssh") return `ssh:${remoteLabel(i)}`;
-  if (i.kind === "docker" || i.kind === "podman") return i.kind;
+  if (hasImage(i)) return i.kind;
   return "dockerSandbox";
 }
 

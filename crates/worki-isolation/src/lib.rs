@@ -46,6 +46,8 @@ pub enum Isolation {
     Docker { image: String },
     /// A Podman container per worktree (in the Podman machine VM).
     Podman { image: String },
+    /// An Apple container per worktree, each in its own lightweight VM.
+    AppleContainer { image: String },
     /// Another machine reached over SSH; only for projects that live there.
     #[serde(rename_all = "camelCase")]
     Ssh {
@@ -81,6 +83,9 @@ pub enum ProjectIsolation {
     Podman {
         image: String,
     },
+    AppleContainer {
+        image: String,
+    },
 }
 
 impl ProjectIsolation {
@@ -96,6 +101,9 @@ impl ProjectIsolation {
                 image: image.clone(),
             },
             Self::Podman { image } => Isolation::Podman {
+                image: image.clone(),
+            },
+            Self::AppleContainer { image } => Isolation::AppleContainer {
                 image: image.clone(),
             },
         }
@@ -114,7 +122,10 @@ impl Isolation {
     pub fn is_container(&self) -> bool {
         matches!(
             self,
-            Self::DockerSandbox { .. } | Self::Docker { .. } | Self::Podman { .. }
+            Self::DockerSandbox { .. }
+                | Self::Docker { .. }
+                | Self::Podman { .. }
+                | Self::AppleContainer { .. }
         )
     }
 
@@ -135,6 +146,9 @@ impl Isolation {
             ),
             Self::Docker { image } => Box::new(Container::new(Engine::Docker, image.clone())),
             Self::Podman { image } => Box::new(Container::new(Engine::Podman, image.clone())),
+            Self::AppleContainer { image } => {
+                Box::new(Container::new(Engine::Apple, image.clone()))
+            }
             Self::Ssh { keep_alive, .. } => {
                 Box::new(Ssh::new(self.ssh_target().unwrap_or_default(), *keep_alive))
             }
@@ -157,7 +171,9 @@ impl Isolation {
             Self::DockerSandbox { template } => {
                 template.as_deref().map_or(Ok(()), validate_image_ref)
             }
-            Self::Docker { image } | Self::Podman { image } => validate_image_ref(image),
+            Self::Docker { image } | Self::Podman { image } | Self::AppleContainer { image } => {
+                validate_image_ref(image)
+            }
             Self::Ssh { .. } => self.ssh_target().unwrap_or_default().validate(),
         }
     }
@@ -179,6 +195,7 @@ impl Isolation {
             Self::DockerSandbox { .. } => "dockerSandbox".into(),
             Self::Docker { .. } => "docker".into(),
             Self::Podman { .. } => "podman".into(),
+            Self::AppleContainer { .. } => "appleContainer".into(),
             Self::Ssh { .. } => format!("ssh:{}", self.ssh_target().unwrap_or_default().display()),
         }
     }
@@ -190,9 +207,17 @@ impl Isolation {
             Self::DockerSandbox { .. } => "sandbox".into(),
             Self::Docker { .. } => "docker".into(),
             Self::Podman { .. } => "podman".into(),
+            Self::AppleContainer { .. } => "apple container".into(),
             Self::Ssh { .. } => self.ssh_target().unwrap_or_default().display(),
         }
     }
+}
+
+/// Where worki keeps its own files.
+pub(crate) fn data_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("worki")
 }
 
 pub fn validate_image_ref(image: &str) -> anyhow::Result<()> {
@@ -312,9 +337,45 @@ pub struct Workspace {
     pub claude_login_dir: Option<PathBuf>,
     /// A folder all the project's environments share, at [`PROJECT_FOLDER`] inside.
     pub shared_folder: Option<PathBuf>,
-    /// What to do with an existing environment made with other Claude Code folders or project
-    /// folder than `ws` asks for.
+    /// CPUs and memory for a new container or sandbox; unset ones are the engine's default.
+    pub resources: Resources,
+    /// What to do with an existing environment made with other Claude Code folders, project
+    /// folder or resources than `ws` asks for.
     pub outdated: Outdated,
+}
+
+/// CPUs and memory a container or sandbox gets when it's created.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Resources {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
+    /// GiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_gb: Option<u32>,
+}
+
+impl Resources {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(cpus) = self.cpus {
+            anyhow::ensure!((1..=256).contains(&cpus), "CPUs must be between 1 and 256");
+        }
+        if let Some(gb) = self.memory_gb {
+            anyhow::ensure!(
+                (1..=1024).contains(&gb),
+                "memory must be between 1 and 1024 GB"
+            );
+        }
+        Ok(())
+    }
+
+    /// Each field from `self`, else from `fallback`.
+    pub fn or(self, fallback: Resources) -> Resources {
+        Resources {
+            cpus: self.cpus.or(fallback.cpus),
+            memory_gb: self.memory_gb.or(fallback.memory_gb),
+        }
+    }
 }
 
 /// What [`Backend::grant_access`] does with an environment made with other settings than it's

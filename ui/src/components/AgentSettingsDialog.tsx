@@ -72,7 +72,7 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
                 Settings for isolated sessions…
               </Button>
               <span className="text-[13px] leading-relaxed text-faint">
-                For User Isolation, Docker Sandboxes, Docker and Podman.
+                For User Isolation, Docker Sandboxes, Docker, Podman and Apple containers.
               </span>
             </div>
           </AgentBox>

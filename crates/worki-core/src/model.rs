@@ -177,17 +177,23 @@ pub enum BaseUpdate {
     },
 }
 
-/// Where a snapshot lives: an sbx template, or a Docker or Podman image.
+/// Where a snapshot lives: an sbx template, or a Docker, Podman or Apple container image.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum SnapshotEngine {
     DockerSandbox,
     Docker,
     Podman,
+    AppleContainer,
 }
 
 impl SnapshotEngine {
-    pub const ALL: [Self; 3] = [Self::DockerSandbox, Self::Docker, Self::Podman];
+    pub const ALL: [Self; 4] = [
+        Self::DockerSandbox,
+        Self::Docker,
+        Self::Podman,
+        Self::AppleContainer,
+    ];
 
     /// An isolation on this engine, to reach its snapshots.
     pub fn isolation(self) -> Isolation {
@@ -197,6 +203,9 @@ impl SnapshotEngine {
                 image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
             },
             Self::Podman => Isolation::Podman {
+                image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
+            },
+            Self::AppleContainer => Isolation::AppleContainer {
                 image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
             },
         }
@@ -211,6 +220,9 @@ impl SnapshotEngine {
             }
             Isolation::Docker { image } if custom(image) => Some((Self::Docker, image.clone())),
             Isolation::Podman { image } if custom(image) => Some((Self::Podman, image.clone())),
+            Isolation::AppleContainer { image } if custom(image) => {
+                Some((Self::AppleContainer, image.clone()))
+            }
             _ => None,
         }
     }
@@ -420,6 +432,9 @@ pub struct ProjectEnvironment {
     pub shared_folder: bool,
     #[serde(default)]
     pub claude_files: FilesScope,
+    /// Over the global default, field by field.
+    #[serde(default)]
+    pub resources: worki_isolation::Resources,
 }
 
 /// Who shares a set of files: the whole project, or each worktree its own.
@@ -620,6 +635,9 @@ pub struct IsolationSettings {
     /// Stop worktree containers and sandboxes when worki quits instead of leaving them running.
     #[serde(default)]
     pub stop_on_quit: bool,
+    /// CPUs and memory for new containers and sandboxes; projects can override them.
+    #[serde(default)]
+    pub resources: worki_isolation::Resources,
 }
 
 #[cfg(test)]

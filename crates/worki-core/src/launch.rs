@@ -150,10 +150,14 @@ pub fn continue_command(
             shell_quote(user),
             shell_quote(&in_dir)
         ),
-        Isolation::DockerSandbox { .. } | Isolation::Docker { .. } | Isolation::Podman { .. } => {
+        Isolation::DockerSandbox { .. }
+        | Isolation::Docker { .. }
+        | Isolation::Podman { .. }
+        | Isolation::AppleContainer { .. } => {
             let engine = match isolation {
                 Isolation::DockerSandbox { .. } => "sbx",
                 Isolation::Docker { .. } => "docker",
+                Isolation::AppleContainer { .. } => "container",
                 _ => "podman",
             };
             format!(
