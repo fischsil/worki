@@ -608,7 +608,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
       toast(
         counts.length === 0
           ? "No new review comments or failed checks."
-          : `Added ${counts.join(" and ")}; send them to the agent below.`,
+          : `Added ${counts.join(" and ")} as local drafts; send them to the agent below.`,
         "info",
       );
     } catch (e) {

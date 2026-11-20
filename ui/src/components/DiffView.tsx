@@ -369,10 +369,10 @@ function CommentRow({ worktreePath, comment }: { worktreePath: string; comment: 
             <div className={clsx(CARD, "group/comment border-line")}>
               <CommentHeader where={where}>
                 <div className="flex items-center opacity-0 transition-opacity group-hover/comment:opacity-100">
-                  <IconButton label="Edit comment" onClick={() => setEditing(true)}>
+                  <IconButton label="Edit locally" onClick={() => setEditing(true)}>
                     <Pencil size={12} />
                   </IconButton>
-                  <IconButton label="Delete comment" onClick={() => remove(worktreePath, comment.id)}>
+                  <IconButton label="Delete locally" onClick={() => remove(worktreePath, comment.id)}>
                     <Trash2 size={12} />
                   </IconButton>
                 </div>
@@ -603,7 +603,7 @@ function CommentEditor({
           variant={canSend ? undefined : "primary"}
           onClick={submit}
           disabled={!text.trim()}
-          title={canSend ? "⌘↩" : "↩"}
+          title={`${canSend ? "⌘↩" : "↩"} · kept locally until it's sent to an agent`}
         >
           {submitLabel}
         </Button>

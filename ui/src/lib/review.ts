@@ -22,6 +22,8 @@ interface ReviewState {
   add: (worktree: string, comment: Omit<ReviewComment, "id">) => void;
   update: (worktree: string, id: string, text: string) => void;
   remove: (worktree: string, id: string) => void;
+  /** Removes what the failed check `name` added. */
+  removeCheck: (worktree: string, name: string) => void;
   clear: (worktree: string) => void;
 }
 
@@ -35,6 +37,7 @@ export const useReview = create<ReviewState>()(
         add: (worktree, c) => edit(worktree, (list) => [...list, { ...c, id: crypto.randomUUID() }]),
         update: (worktree, id, text) => edit(worktree, (list) => list.map((c) => (c.id === id ? { ...c, text } : c))),
         remove: (worktree, id) => edit(worktree, (list) => list.filter((c) => c.id !== id)),
+        removeCheck: (worktree, name) => edit(worktree, (list) => list.filter((c) => c.check !== name)),
         clear: (worktree) =>
           set((s) => {
             const { [worktree]: _, ...rest } = s.comments;
