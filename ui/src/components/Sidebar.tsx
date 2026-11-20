@@ -575,7 +575,7 @@ function WorktreeRow({ project, worktree, openPr }: { project: Project; worktree
       {comments > 0 && (
         <span
           className="flex items-center gap-0.5 fs-sidebar-xs text-accent"
-          title={`${plural(comments, "review comment")} not sent yet`}
+          title={`${plural(comments, "local comment")} not sent yet`}
         >
           <MessageSquare size={11} />
           {comments}

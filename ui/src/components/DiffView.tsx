@@ -13,7 +13,6 @@ import {
   Minimize2,
   Pencil,
   Send,
-  Trash2,
   X,
 } from "lucide-react";
 import { Fragment, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -369,11 +368,11 @@ function CommentRow({ worktreePath, comment }: { worktreePath: string; comment: 
             <div className={clsx(CARD, "group/comment border-line")}>
               <CommentHeader where={where}>
                 <div className="flex items-center opacity-0 transition-opacity group-hover/comment:opacity-100">
-                  <IconButton label="Edit locally" onClick={() => setEditing(true)}>
+                  <IconButton label="Refine" onClick={() => setEditing(true)}>
                     <Pencil size={12} />
                   </IconButton>
-                  <IconButton label="Delete locally" onClick={() => remove(worktreePath, comment.id)}>
-                    <Trash2 size={12} />
+                  <IconButton label="Discard" onClick={() => remove(worktreePath, comment.id)}>
+                    <X size={12} />
                   </IconButton>
                 </div>
               </CommentHeader>
@@ -603,7 +602,7 @@ function CommentEditor({
           variant={canSend ? undefined : "primary"}
           onClick={submit}
           disabled={!text.trim()}
-          title={`${canSend ? "⌘↩" : "↩"} · kept locally until it's sent to an agent`}
+          title={canSend ? "⌘↩" : "↩"}
         >
           {submitLabel}
         </Button>

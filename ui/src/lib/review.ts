@@ -17,7 +17,7 @@ export interface ReviewComment {
 }
 
 interface ReviewState {
-  /** Draft comments per worktree path. */
+  /** Local comments per worktree path. */
   comments: Record<string, ReviewComment[]>;
   add: (worktree: string, comment: Omit<ReviewComment, "id">) => void;
   update: (worktree: string, id: string, text: string) => void;

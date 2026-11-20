@@ -94,7 +94,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           <SquareTerminal size={14} />
         </IconButton>
         <IconButton
-          label={`${showChanges ? "Hide" : "Show"} changes (⌘J)${pending > 0 ? ` · ${plural(pending, "draft comment")}` : ""}`}
+          label={`${showChanges ? "Hide" : "Show"} changes (⌘J)${pending > 0 ? ` · ${plural(pending, "local comment")}` : ""}`}
           onClick={toggleChanges}
           className={clsx("relative", showChanges && "text-fg")}
         >
@@ -264,12 +264,12 @@ function WorktreeUsage({ worktreePath }: { worktreePath: string }) {
   );
 }
 
-function DraftRow({ onRemove, children }: { onRemove: () => void; children: ReactNode }) {
+function LocalCommentRow({ onRemove, children }: { onRemove: () => void; children: ReactNode }) {
   return (
     <div className="group/comment -mx-1 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 fs-panel-sm text-muted hover:bg-hover">
       {children}
       <IconButton
-        label="Remove locally"
+        label="Discard"
         onClick={onRemove}
         className="size-4 opacity-0 group-hover/comment:opacity-100"
       >
@@ -312,22 +312,22 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (co
     <div className="flex flex-col gap-3 border-t border-line p-5">
       <div className="flex flex-col gap-0.5">
         <div className="flex items-baseline justify-between">
-          <span className="fs-panel font-medium">{plural(comments.length, "draft comment")}</span>
+          <span className="fs-panel font-medium">{plural(comments.length, "local comment")}</span>
           <button
             className="fs-panel-sm text-muted hover:text-fg"
-            title="Discard all drafts locally"
+            title="Discard all local comments"
             onClick={() => clear(worktreePath)}
           >
             Discard
           </button>
         </div>
         <span className="fs-panel-xs text-faint">
-          Kept locally for an agent. Editing or removing one doesn't change the pull request.
+          Sent to an agent, never to the pull request. Refining or discarding one leaves the pull request as it is.
         </span>
       </div>
       <div className="-mx-1 flex max-h-32 flex-col overflow-y-auto px-1">
         {onLines.map((c) => (
-          <DraftRow key={c.id} onRemove={() => remove(worktreePath, c.id)}>
+          <LocalCommentRow key={c.id} onRemove={() => remove(worktreePath, c.id)}>
             <button
               onClick={() => onOpen(c)}
               title={c.text}
@@ -338,12 +338,12 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (co
               </span>
               <span className="min-w-0 truncate text-faint">{c.text}</span>
             </button>
-          </DraftRow>
+          </LocalCommentRow>
         ))}
         {checks.map((name) => (
-          <DraftRow key={name} onRemove={() => removeCheck(worktreePath, name)}>
+          <LocalCommentRow key={name} onRemove={() => removeCheck(worktreePath, name)}>
             <span className="min-w-0 flex-1 truncate">Failed check: {name}</span>
-          </DraftRow>
+          </LocalCommentRow>
         ))}
       </div>
       {agents.length > 1 && target && (
@@ -494,7 +494,7 @@ function ChangeRow({
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-2">
         {comments > 0 && (
-          <span className="rounded-full bg-accent px-1.5 fs-panel-xs text-accent-fg" title={plural(comments, "draft comment")}>
+          <span className="rounded-full bg-accent px-1.5 fs-panel-xs text-accent-fg" title={plural(comments, "local comment")}>
             {comments}
           </span>
         )}
