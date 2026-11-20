@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import {
   DEFAULT_AGENT_USER,
@@ -83,9 +83,12 @@ export function IsolationPicker<T extends ProjectIsolation>({
           className="h-8 w-full text-[13px]"
         >
           {visible.map((o) => (
-            <option key={o.kind} value={o.kind}>
-              {o.kind === "inherit" ? (inheritLabel ? `${inheritName} (${inheritLabel})` : inheritName) : o.label}
-            </option>
+            <Fragment key={o.kind}>
+              <option value={o.kind}>
+                {o.kind === "inherit" ? (inheritLabel ? `${inheritName} (${inheritLabel})` : inheritName) : o.label}
+              </option>
+              {o.kind === "inherit" && <hr />}
+            </Fragment>
           ))}
         </Select>
       </Field>

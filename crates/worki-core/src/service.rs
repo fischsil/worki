@@ -277,9 +277,13 @@ impl ProjectService {
 
     /// Saves who the account signs in as.
     pub fn save_account(&self, account: &ClaudeAccount) -> Result<()> {
+        self.update_account(&account.id, |saved| *saved = account.clone())
+    }
+
+    fn update_account(&self, id: &str, change: impl FnOnce(&mut ClaudeAccount)) -> Result<()> {
         self.update_agent_settings(|s| {
-            if let Some(saved) = s.accounts.iter_mut().find(|a| a.id == account.id) {
-                *saved = account.clone();
+            if let Some(saved) = s.accounts.iter_mut().find(|a| a.id == id) {
+                change(saved);
             }
         })
     }
@@ -438,6 +442,79 @@ impl ProjectService {
             }
         }
         Ok(configs)
+    }
+
+    /// Takes the login a sign-in through worki left in `staged`, with `config` as Claude Code's
+    /// folder, as `account`'s: unless it signed in as someone else than the account was, or as
+    /// another account already added. The account's own login stays as it was then.
+    pub fn accept_sign_in(&self, account: &str, config: &Path, staged: &Path) -> Result<()> {
+        let login =
+            agents::account_login_dir(&paths::account_dir(account)).map_err(Error::isolation)?;
+        if let Some(new) = agents::config_owner(config) {
+            if let Some(old) =
+                agents::login_owner(&login).filter(|old| old.organization != new.organization)
+            {
+                return Err(Error::Account(format!(
+                    "You signed in as {}, but this account is {}. Sign in with the browser signed \
+                     in to claude.ai as {1}, or add {0} as another account.",
+                    new.name(),
+                    old.name()
+                )));
+            }
+            let settings = self.agent_settings()?;
+            let taken = settings
+                .accounts
+                .iter()
+                .filter(|a| a.id != account)
+                .any(|other| {
+                    agents::account_login_dir(&paths::account_dir(&other.id))
+                        .ok()
+                        .and_then(|login| agents::login_owner(&login))
+                        .is_some_and(|o| o.organization == new.organization)
+                });
+            if taken {
+                return Err(Error::Account(format!(
+                    "{} is already added as another account.",
+                    new.name()
+                )));
+            }
+        }
+        let file = worki_isolation::LOGIN_FILE;
+        std::fs::rename(staged.join(file), login.join(file))?;
+        self.update_account(account, |a| a.signed_in_as = None)?;
+        self.keep_signed_in_identity(account, config)
+    }
+
+    /// Notes who `profile` (the output of [`agents::LOGIN_PROFILE_SCRIPT`] for `account`'s login)
+    /// says the login signs in as, and its plan when that's the account; fails when it's someone
+    /// else.
+    pub fn verify_login(&self, account: &str, profile: &serde_json::Value) -> Result<()> {
+        let login =
+            agents::account_login_dir(&paths::account_dir(account)).map_err(Error::isolation)?;
+        let other = agents::foreign_login(&login, profile);
+        let plan = profile["organization"]["organization_type"]
+            .as_str()
+            .filter(|_| other.is_none())
+            .map(|t| t.strip_prefix("claude_").unwrap_or(t).to_owned());
+        let saved = self.account(account)?;
+        let plan = plan.or(saved.plan.clone());
+        if saved.signed_in_as != other || saved.plan != plan {
+            self.update_account(account, |a| {
+                a.signed_in_as = other.clone();
+                a.plan = plan;
+            })?;
+        }
+        match other {
+            None => Ok(()),
+            Some(other) => {
+                let me = agents::login_owner(&login);
+                let me = me.as_ref().map_or("this account", |o| o.name());
+                Err(Error::Account(format!(
+                    "The login of {me} signs in as {other} now. Sign {me} in again under \
+                     Settings › Accounts, with the browser signed in to claude.ai as {me}."
+                )))
+            }
+        }
     }
 
     /// After signing `account` in through worki with `config` as Claude Code's folder: keeps who

@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { message } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ExternalLink, LoaderCircle, Plus, RefreshCw, Trash2, UserRound } from "lucide-react";
+import clsx from "clsx";
+import { ExternalLink, LoaderCircle, Plus, Trash2, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type ClaudeAccount, errorMessage, loginSharers, type LoginEvent } from "../lib/api";
@@ -12,7 +13,6 @@ import { Button, DefaultMark, ErrorText, Field, IconButton, Input, NestedDialog,
 export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccount[]; defaultId: string | null }) {
   const qc = useQueryClient();
   const [signingIn, setSigningIn] = useState<{ account: ClaudeAccount; isNew: boolean } | null>(null);
-  const [checking, setChecking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: keys.agentSettings });
   const { data: settings } = useAgentSettings();
@@ -31,12 +31,6 @@ export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccoun
 
   const add = () => act(async () => setSigningIn({ account: await api.addClaudeAccount(), isNew: true }));
 
-  const check = (account: ClaudeAccount) =>
-    act(async () => {
-      setChecking(account.id);
-      await api.checkClaudeAccount(account.id).finally(() => setChecking(null));
-    });
-
   const remove = (account: ClaudeAccount) =>
     act(async () => {
       const warning = await api.removeClaudeAccount(account.id);
@@ -51,12 +45,20 @@ export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccoun
             const sharing = sharers(a.id);
             return (
               <div key={a.id} className="flex items-center gap-3 px-3 py-2">
-                <UserRound size={14} className={a.email ? "shrink-0 text-added" : "shrink-0 text-faint"} />
+                <UserRound
+                  size={14}
+                  className={clsx("shrink-0", a.signedInAs ? "text-removed" : a.email ? "text-added" : "text-faint")}
+                />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px]">{a.email ?? "Not signed in"}</div>
                   {(a.plan || a.organization) && (
                     <div className="truncate text-[11px] text-faint">
                       {[a.plan, a.organization].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                  {a.signedInAs && (
+                    <div className="text-[11px] text-removed">
+                      Its login signs in as {a.signedInAs} now. Sign in again as {a.email ?? "this account"}.
                     </div>
                   )}
                   {sharing.length > 1 && (
@@ -73,11 +75,6 @@ export function ClaudeAccounts({ accounts, defaultId }: { accounts: ClaudeAccoun
                 <Button onClick={() => setSigningIn({ account: a, isNew: false })} className="shrink-0 whitespace-nowrap">
                   {a.email ? "Sign in again" : "Sign in"}
                 </Button>
-                {a.email && (
-                  <IconButton label="Check who it signs in as" onClick={() => check(a)}>
-                    {checking === a.id ? <LoaderCircle size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                  </IconButton>
-                )}
                 <IconButton label="Remove account" onClick={() => remove(a)}>
                   <Trash2 size={13} />
                 </IconButton>

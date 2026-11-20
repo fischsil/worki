@@ -416,7 +416,13 @@ impl Container {
         self.checked(args, &what).map(drop)
     }
 
-    fn ensure_running(&self, listed: &Listed) -> Result<()> {
+    /// Starts the listed environment if it isn't running, with the host folders `ws`'s worktree
+    /// mounts made again first: git removes `.git/worktrees` with the last linked worktree, and
+    /// engines won't start an environment whose mounted folder is gone.
+    fn ensure_running(&self, listed: &Listed, ws: Option<&Workspace>) -> Result<()> {
+        if let Some((ws, worktree)) = ws.and_then(|ws| Some((ws, ws.worktree.as_deref()?))) {
+            mounts(&ws.repo, worktree, admin_dir(worktree).as_deref());
+        }
         if !listed.running {
             self.start(&listed.name)?;
         }
@@ -1256,14 +1262,16 @@ pub struct AccountRun {
     name: String,
 }
 
+/// The file Claude Code keeps its login in, in a login folder.
+pub const LOGIN_FILE: &str = ".credentials.json";
+
 /// Where an account keeps its login: a folder of its own inside the account's, so environments
 /// can share the login without anything else of the account. Moves a login from where older
 /// versions kept it, the account's folder itself.
 pub fn account_login_dir(account_dir: &Path) -> Result<PathBuf> {
-    const LOGIN: &str = ".credentials.json";
     let dir = account_dir.join("login");
     std::fs::create_dir_all(&dir)?;
-    let (old, new) = (account_dir.join(LOGIN), dir.join(LOGIN));
+    let (old, new) = (account_dir.join(LOGIN_FILE), dir.join(LOGIN_FILE));
     if old.exists() && !new.exists() {
         std::fs::rename(&old, &new)?;
     }
@@ -1449,7 +1457,7 @@ impl Backend for Container {
         };
         let name = sandbox_name(worktree);
         if let Some(listed) = self.list()?.into_iter().find(|s| s.name == name) {
-            self.ensure_running(&listed)?;
+            self.ensure_running(&listed, Some(ws))?;
             let outdated = || {
                 self.bound_to(&listed)
                     .made_with()
@@ -1477,8 +1485,7 @@ impl Backend for Container {
                 self.image
             );
         }
-        let admin = admin_dir(worktree);
-        let mounts = mounts(&ws.repo, worktree, admin.as_deref());
+        let mounts = mounts(&ws.repo, worktree, admin_dir(worktree).as_deref());
         self.create(&name, worktree, &mounts, ws)
     }
 
@@ -1872,7 +1879,7 @@ impl Backend for Container {
         }
         let mut out: Vec<Box<dyn Backend>> = Vec::new();
         for listed in self.list()? {
-            self.ensure_running(&listed)?;
+            self.ensure_running(&listed, None)?;
             out.push(Box::new(self.bound_to(&listed)));
         }
         Ok(out)
@@ -1880,7 +1887,7 @@ impl Backend for Container {
 
     fn instance_for(&self, ws: &Workspace) -> Option<Box<dyn Backend>> {
         let listed = self.listed(ws)?;
-        self.ensure_running(&listed).ok()?;
+        self.ensure_running(&listed, Some(ws)).ok()?;
         Some(Box::new(self.bound_to(&listed)))
     }
 

@@ -122,19 +122,19 @@ pub async fn log_in_claude_account(
     on_event: Channel<LoginEvent>,
 ) -> CmdResult<ClaudeAccount> {
     let account = state.projects.account(&id).map_err(err)?;
-    let account_dir = paths::account_dir(&id);
-    let login = agents::account_login_dir(&account_dir).map_err(err)?;
     let scratch = throwaway_config("sign-in")?;
+    let staged = throwaway_config("login")?;
     let command = "claude auth login --claudeai";
-    let config = scratch.path().to_owned();
+    let (config, login) = (scratch.path().to_owned(), staged.path().to_owned());
     run_sign_in(&logins, id, config, Some(login), command, on_event, |_| {
         false
     })
     .await?;
     state
         .projects
-        .keep_signed_in_identity(&account.id, scratch.path())
+        .accept_sign_in(&account.id, scratch.path(), staged.path())
         .map_err(err)?;
+    let account = state.projects.account(&account.id).map_err(err)?;
     refresh(&state, account).await
 }
 
@@ -243,16 +243,6 @@ pub fn cancel_login(logins: State<'_, Logins>, id: String) {
     if let Some(input) = logins.input(&id) {
         input.send(PtyInput::Kill).ok();
     }
-}
-
-/// Reads who the account signs in as again.
-#[tauri::command]
-pub async fn check_claude_account(
-    state: State<'_, AppState>,
-    id: String,
-) -> CmdResult<ClaudeAccount> {
-    let account = state.projects.account(&id).map_err(err)?;
-    refresh(&state, account).await
 }
 
 async fn refresh(state: &AppState, mut account: ClaudeAccount) -> CmdResult<ClaudeAccount> {

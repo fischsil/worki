@@ -317,6 +317,56 @@ pub fn copy_login_identity(login: &Path, own: &Path) -> Result<()> {
     write_claude_json(own, &config)
 }
 
+/// Prints Claude's profile of the login in `$CLAUDE_SECURESTORAGE_CONFIG_DIR`: who its token
+/// signs in as, whatever `.claude.json` says. Run where the login is mounted, so the token never
+/// leaves it; prints nothing when the token has expired.
+pub const LOGIN_PROFILE_SCRIPT: &str = r#"token=$(tr -d '\n' < "$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json" | grep -o '"claudeAiOauth"[^}]*' | sed -n 's/.*"accessToken"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); [ -n "$token" ] && printf 'Authorization: Bearer %s' "$token" | curl -fsS -m 10 -H @- https://api.anthropic.com/api/oauth/profile; true"#;
+
+/// Whose a login is: the organization it signs in to, and its email when known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Owner {
+    pub organization: String,
+    pub email: Option<String>,
+}
+
+impl Owner {
+    fn of(identity: &Identity) -> Option<Self> {
+        let account = identity.get("oauthAccount")?;
+        Some(Self {
+            organization: account["organizationUuid"].as_str()?.to_owned(),
+            email: account["emailAddress"].as_str().map(str::to_owned),
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        self.email.as_deref().unwrap_or("another account")
+    }
+}
+
+/// Who signed in with `config` as Claude Code's folder, as Claude Code wrote it there.
+pub fn config_owner(config: &Path) -> Option<Owner> {
+    Owner::of(&identity_in(config)?)
+}
+
+/// Who the login was signed in as through worki, kept beside it.
+pub fn login_owner(login: &Path) -> Option<Owner> {
+    Owner::of(&stored_identity(login)?)
+}
+
+/// Who `profile` (the output of [`LOGIN_PROFILE_SCRIPT`]) says the login signs in as, when that
+/// is another organization than [`login_owner`]'s: its email, or its organization's name.
+pub fn foreign_login(login: &Path, profile: &Value) -> Option<String> {
+    let org = profile["organization"]["uuid"].as_str()?;
+    if login_owner(login)?.organization == org {
+        return None;
+    }
+    let who = profile["account"]["email"]
+        .as_str()
+        .or(profile["organization"]["name"].as_str())
+        .unwrap_or("another organization");
+    Some(who.to_owned())
+}
+
 /// Puts who the login is into each of `configs` that exists.
 pub fn give_login_identity(login: &Path, configs: &[PathBuf]) -> Result<()> {
     for dir in configs.iter().filter(|d| d.exists()) {
@@ -596,6 +646,25 @@ mod tests {
             stored_identity(&login).unwrap()["oauthAccount"]["emailAddress"],
             "mine@b.c"
         );
+    }
+
+    #[test]
+    fn a_login_of_another_organization_is_told_apart() {
+        let root = tempfile::tempdir().unwrap();
+        let (login, scratch) = (root.path().join("login"), root.path().join("scratch"));
+        write_claude_json(
+            &scratch,
+            &serde_json::json!({"oauthAccount":{"emailAddress":"me@home.org","organizationUuid":"home"}}),
+        )
+        .unwrap();
+        keep_login_identity(&login, &scratch).unwrap();
+        let profile = |org: &str| serde_json::json!({"account":{"email":"me@work.org"},"organization":{"uuid":org}});
+        assert_eq!(foreign_login(&login, &profile("home")), None);
+        assert_eq!(
+            foreign_login(&login, &profile("work")).as_deref(),
+            Some("me@work.org")
+        );
+        assert_eq!(foreign_login(&login, &Value::Null), None);
     }
 
     #[test]

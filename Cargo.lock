@@ -5545,6 +5545,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tempfile",
+ "tokio",
  "tracing",
  "uuid",
  "window-vibrancy",

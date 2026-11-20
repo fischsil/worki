@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 pub use container::{
     account_launch, account_login_dir, sandbox_name, AccountRun, Container, Engine,
-    CLAUDE_INSTALLER, DEFAULT_CONTAINER_IMAGE, SANDBOX_KIT,
+    CLAUDE_INSTALLER, DEFAULT_CONTAINER_IMAGE, LOGIN_FILE, SANDBOX_KIT,
 };
 pub use mac_user::{MacUser, AGENT_GROUP, DEFAULT_AGENT_USER};
 pub use none::{host_which, NoIsolation};

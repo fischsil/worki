@@ -504,6 +504,10 @@ pub struct ClaudeAccount {
     pub plan: Option<String>,
     #[serde(default)]
     pub organization: Option<String>,
+    /// Who its login was last found to sign in as, when that isn't who it was signed in as
+    /// through worki: something replaced the login since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_in_as: Option<String>,
 }
 
 pub type JsonObject = serde_json::Map<String, serde_json::Value>;

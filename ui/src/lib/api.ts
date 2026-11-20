@@ -360,6 +360,8 @@ export interface ClaudeAccount {
   email: string | null;
   plan: string | null;
   organization: string | null;
+  /** Who its login was last found to sign in as, when that isn't who it was signed in as. */
+  signedInAs?: string;
 }
 
 export type LoginEvent = { kind: "url"; url: string } | { kind: "output"; line: string };
@@ -717,7 +719,6 @@ export const api = {
   },
   enterLoginCode: (id: string, code: string) => invoke<void>("enter_login_code", { id, code }),
   cancelLogin: (id: string) => invoke<void>("cancel_login", { id }),
-  checkClaudeAccount: (id: string) => invoke<ClaudeAccount>("check_claude_account", { id }),
   /** Each worktree's container or sandbox switches at its next session start while nothing runs in it. */
   setProjectAccount: (projectId: string, accountId: string | null) =>
     invoke<void>("set_project_account", { projectId, accountId }),

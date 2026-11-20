@@ -317,14 +317,46 @@ async fn read_account(
     req: &LaunchRequest,
     token_name: Option<String>,
 ) -> CmdResult<Option<worki_pty::Account>> {
-    let (isolation, req) = (isolation.clone(), req.clone());
-    let launch = blocking(move || isolation.backend().launch(&req)).await?;
-    let status = worki_core::setup::run_captured(launch).await.map_err(err)?;
+    let status = run_captured_in(isolation, req.clone()).await?;
     let mut account = crate::agents::account_from_auth_status(&status);
     if let Some(account) = account.as_mut().filter(|a| a.token) {
         account.token_name = token_name;
     }
     Ok(account)
+}
+
+/// Runs `req` in `isolation` and returns what it printed.
+async fn run_captured_in(isolation: &Isolation, req: LaunchRequest) -> CmdResult<String> {
+    let isolation = isolation.clone();
+    let launch = blocking(move || isolation.backend().launch(&req)).await?;
+    worki_core::setup::run_captured(launch).await.map_err(err)
+}
+
+/// Refuses to start a session on `account`'s login when it signs in as someone else than the
+/// account, asked from inside the worktree's environment, where the login is. When that can't be
+/// told (no network, an expired token), the session starts.
+async fn verify_login(
+    state: &AppState,
+    isolation: &Isolation,
+    worktree: &Path,
+    account: &str,
+) -> CmdResult<()> {
+    let req = LaunchRequest {
+        cwd: worktree.to_owned(),
+        command: Some(worki_core::agents::LOGIN_PROFILE_SCRIPT.to_owned()),
+        interactive: false,
+        stdin: false,
+        env: Vec::new(),
+        session: None,
+    };
+    let profile = match run_captured_in(isolation, req).await {
+        Ok(out) => serde_json::from_str(out.trim()).unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("checking who account {account} signs in as: {e}");
+            return Ok(());
+        }
+    };
+    state.projects.verify_login(account, &profile).map_err(err)
 }
 
 /// What starting any session in a worktree needs: the agent, the isolation (checked, with the
@@ -492,12 +524,31 @@ async fn prepare_steps(
         .grant_access_with(&project, Some(worktree_path), outdated)
         .await
         .map_err(err)?;
+    let account = home
+        .as_ref()
+        .filter(|h| h.login_dir.is_some())
+        .and_then(|h| h.account.as_deref());
+    let verify = async {
+        match account {
+            Some(account) => {
+                log.step("Checking who the account signs in as…");
+                verify_login(state, &isolation, worktree_path, account).await
+            }
+            None => Ok(()),
+        }
+    };
+    let ready = async {
+        match &profile {
+            Some(p) => ready_agent(state, &project, worktree_path, &isolation, p, &log).await,
+            None => Ok(()),
+        }
+    };
+    tokio::try_join!(verify, ready)?;
     let with_token = home
         .as_ref()
         .is_some_and(|h| h.sign_in == AccountSignIn::Token);
     let remote_control = settings.remote_control && !with_token;
     if let Some(p) = &profile {
-        ready_agent(state, &project, worktree_path, &isolation, p, &log).await?;
         if remote_control && p.executable() == Some("claude") {
             log.step("Allowing Remote Control…");
             allow_remote_control(&isolation).await;

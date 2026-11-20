@@ -523,8 +523,6 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return null;
     case "cancel_login":
       return null;
-    case "check_claude_account":
-      return agentSettings.accounts.find((a) => a.id === args.id);
     case "set_project_account": {
       const projectAccounts = { ...agentSettings.projectAccounts };
       if (args.accountId) projectAccounts[args.projectId] = args.accountId;

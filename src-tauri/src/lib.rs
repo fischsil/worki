@@ -212,7 +212,6 @@ pub fn run() {
             accounts::log_in_claude_account,
             accounts::enter_login_code,
             accounts::cancel_login,
-            accounts::check_claude_account,
             accounts::set_project_account,
             accounts::set_project_sign_in,
             accounts::project_claude_dir,
