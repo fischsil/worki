@@ -409,9 +409,7 @@ impl ProjectService {
             dir = own;
         }
         let login_dir = match (sign_in, &account) {
-            (AccountSignIn::Folder, Some(account)) => {
-                Some(self.ready_login(&settings, account, &dir)?)
-            }
+            (AccountSignIn::Folder, Some(account)) => Some(self.ready_login(account, &dir)?),
             _ => None,
         };
         Ok(Some(ClaudeHome {
@@ -424,7 +422,8 @@ impl ProjectService {
 
     /// The Claude Code config folders sessions signing in with `account`'s login use: those of
     /// the projects on it, and of their worktrees that have their own.
-    fn login_configs(&self, settings: &AgentSettings, account: &str) -> Result<Vec<PathBuf>> {
+    fn login_configs(&self, account: &str) -> Result<Vec<PathBuf>> {
+        let settings = self.agent_settings()?;
         let mut configs = Vec::new();
         for project in self.list_projects()? {
             let on_login = settings.account_of(&project.id).map(String::as_str) == Some(account)
@@ -448,32 +447,17 @@ impl ProjectService {
         let login =
             agents::account_login_dir(&paths::account_dir(account)).map_err(Error::isolation)?;
         agents::keep_login_identity(&login, config).map_err(Error::isolation)?;
-        let configs = self.login_configs(&self.agent_settings()?, account)?;
+        let configs = self.login_configs(account)?;
         agents::give_login_identity(&login, &configs).map_err(Error::isolation)
     }
 
-    /// The account's login folder for a session using the config folder `dir`: who the login is
-    /// brought in step first, in case a session signed in again itself, then given to `dir`.
-    fn ready_login(&self, settings: &AgentSettings, account: &str, dir: &Path) -> Result<PathBuf> {
+    /// The account's login folder for a session using the config folder `dir`, with who the login
+    /// is given to `dir`, which can still name the account its project used before.
+    fn ready_login(&self, account: &str, dir: &Path) -> Result<PathBuf> {
         let login =
             agents::account_login_dir(&paths::account_dir(account)).map_err(Error::isolation)?;
-        let configs = self.login_configs(settings, account)?;
-        if let Some(identity) =
-            agents::sync_login_identity(&login, &configs).map_err(Error::isolation)?
-        {
-            self.follow_identity(account, &identity)?;
-        }
         agents::copy_login_identity(&login, dir).map_err(Error::isolation)?;
         Ok(login)
-    }
-
-    /// Updates the account to who its login is after a session signed in again itself.
-    fn follow_identity(&self, account: &str, identity: &agents::Identity) -> Result<()> {
-        let mut saved = self.account(account)?;
-        let profile = &identity["oauthAccount"];
-        saved.email = profile["emailAddress"].as_str().map(str::to_owned);
-        saved.organization = profile["organizationName"].as_str().map(str::to_owned);
-        self.save_account(&saved)
     }
 
     /// Moves what projects need out of the account folders, which older versions used as every

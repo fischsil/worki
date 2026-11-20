@@ -25,6 +25,7 @@ use crate::{
 pub const SANDBOX_KIT: &str = "shell";
 /// Built locally by "Set up" for Docker, Podman and Apple containers.
 pub const DEFAULT_CONTAINER_IMAGE: &str = "worki-agent:1";
+pub const CLAUDE_INSTALLER: &str = "curl -fsSL https://claude.ai/install.sh | bash";
 const AGENT_CONTAINERFILE: &str = include_str!("worki-agent.Containerfile");
 
 /// Environments worki creates; anything else belongs to the user and is never touched.
@@ -380,14 +381,27 @@ impl Container {
         match created {
             Ok(_) if self.engine == Engine::Sbx => self.start(name),
             Ok(_) => Ok(()),
-            Err(e) if policy_missing(&format!("{e:#}")) => bail!(
-                "Docker (sbx) needs a network policy before the first sandbox: open Isolation and \
-                 use Set up on the network policy check, or run `sbx policy init balanced`"
-            ),
+            Err(e) if policy_missing(&format!("{e:#}")) => Err(no_policy()),
             // Created before but not found in the listing (e.g. the engine changed its output
             // format): use it rather than fail.
             Err(e) if already_exists(&e) => self.start(name),
             Err(e) => Err(e),
+        }
+    }
+
+    /// A sandbox with Claude Code's folders of `claude` mounted and set, for signing an account in.
+    fn create_for_account(&self, name: &str, claude: &[(Mount, &str)]) -> Result<()> {
+        let mut args: Vec<String> = ["create", "--name", name, "--pull", "missing"]
+            .map(String::from)
+            .into();
+        for (mount, var) in claude {
+            args.extend(["--env".into(), format!("{var}={}", mount.path.display())]);
+        }
+        args.push(self.image.clone());
+        args.extend(claude.iter().map(|(mount, _)| mount.sbx_arg()));
+        match self.checked(&args, "creating the sign-in sandbox") {
+            Err(e) if policy_missing(&format!("{e:#}")) => Err(no_policy()),
+            created => created.map(drop),
         }
     }
 
@@ -650,6 +664,13 @@ fn parse_sbx_listing(json: &str) -> Result<Vec<Listed>> {
 /// sbx's answer when its global network policy hasn't been set up yet.
 fn policy_missing(text: &str) -> bool {
     text.contains("policy has not been initialized")
+}
+
+fn no_policy() -> anyhow::Error {
+    anyhow::anyhow!(
+        "Docker (sbx) needs a network policy before the first sandbox: open Isolation and use \
+         Set up on the network policy check, or run `sbx policy init balanced`"
+    )
 }
 
 /// The engine refused to create an environment because one with that name exists: sbx says
@@ -1250,7 +1271,8 @@ pub fn account_login_dir(account_dir: &Path) -> Result<PathBuf> {
 }
 
 /// Runs `command` with `config` as Claude Code's config folder and, when given, `login` as where
-/// it keeps its login, in a throwaway container with Docker, else Podman, else Apple's.
+/// it keeps its login, in a throwaway container with Docker, else Podman, else Apple's, else in a
+/// throwaway sandbox with sbx.
 pub fn account_launch(
     config: &Path,
     login: Option<&Path>,
@@ -1258,34 +1280,72 @@ pub fn account_launch(
     interactive: bool,
 ) -> Result<AccountRun> {
     static RUNS: AtomicU64 = AtomicU64::new(0);
-    let engine = Engine::ALL
-        .into_iter()
-        .filter(|&engine| engine != Engine::Sbx)
-        .map(|engine| Container::new(engine, DEFAULT_CONTAINER_IMAGE.into()))
-        .find(|c| c.engine.binary().is_ok() && c.engine_running() && c.image_present())
-        .context(
-            "accounts sign in with Docker, Podman or Apple containers: open Isolation and set one up",
-        )?;
     let name = format!(
         "worki_account-{}-{}",
         std::process::id(),
         RUNS.fetch_add(1, Ordering::SeqCst)
     );
-    let mut args: Vec<String> = ["run", "--rm", if interactive { "-it" } else { "-i" }]
-        .map(String::from)
-        .into();
-    args.extend(["--name".into(), name.clone()]);
-    let mut env = Vec::new();
-    for (mount, var) in claude_mounts(Some(config), login)? {
-        args.extend(["-v".into(), mount.volume_arg(), "-e".into(), var.into()]);
-        env.push((var.to_owned(), mount.path.display().to_string()));
+    let mut problems = Vec::new();
+    let mut ready = None;
+    for engine in [Engine::Docker, Engine::Podman, Engine::Apple, Engine::Sbx] {
+        let image = if engine == Engine::Sbx {
+            SANDBOX_KIT
+        } else {
+            DEFAULT_CONTAINER_IMAGE
+        };
+        let c = Container::new(engine, image.into());
+        let problem = if c.engine.binary().is_err() {
+            "not installed"
+        } else if !c.engine_running() {
+            "not running"
+        } else if !c.image_present() {
+            "worki's image isn't built yet"
+        } else {
+            ready = Some(c);
+            break;
+        };
+        problems.push(format!("{}: {problem}", engine.display()));
     }
-    args.extend([
-        DEFAULT_CONTAINER_IMAGE.into(),
-        "bash".into(),
-        "-lc".into(),
-        command.into(),
-    ]);
+    let Some(engine) = ready else {
+        bail!(
+            "Claude Code on macOS keeps its sign-in in the Keychain, where containers can't use \
+             it, so worki signs accounts in inside a container, and none is ready ({}). Open \
+             Isolation and use Set up on one of them.",
+            problems.join("; ")
+        );
+    };
+    let mounts = claude_mounts(Some(config), login)?;
+    let env: Vec<(String, String)> = mounts
+        .iter()
+        .map(|(mount, var)| (var.to_string(), mount.path.display().to_string()))
+        .collect();
+    let tty = if interactive { "-it" } else { "-i" };
+    let args = match engine.engine {
+        Engine::Sbx => {
+            engine.create_for_account(&name, &mounts)?;
+            let script = format!(
+                "export PATH=\"$HOME/.local/bin:$PATH\"; {CLAUDE_INSTALLER} >&2 && {command}"
+            );
+            ["exec", tty, &name, "bash", "-lc", &script]
+                .map(String::from)
+                .into()
+        }
+        _ => {
+            let mut args: Vec<String> = ["run", "--rm", tty, "--name", &name]
+                .map(String::from)
+                .into();
+            for (mount, var) in &mounts {
+                args.extend([
+                    "-v".into(),
+                    mount.volume_arg(),
+                    "-e".into(),
+                    var.to_string(),
+                ]);
+            }
+            args.extend([engine.image.as_str(), "bash", "-lc", command].map(String::from));
+            args
+        }
+    };
     let launch = Launch {
         program: engine.engine.binary()?.display().to_string(),
         args,

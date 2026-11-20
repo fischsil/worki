@@ -409,7 +409,7 @@ const OLD_CODEX_INSTALLER: &str = r#"npm install -g --prefix "$HOME/.local" @ope
 /// root and should install into that user's home (`~/.local/bin` is on its PATH).
 fn known_installer(executable: &str) -> Option<&'static str> {
     match executable {
-        "claude" => Some("curl -fsSL https://claude.ai/install.sh | bash"),
+        "claude" => Some(worki_isolation::CLAUDE_INSTALLER),
         "codex" => {
             Some("curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh")
         }

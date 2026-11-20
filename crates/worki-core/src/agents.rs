@@ -249,9 +249,9 @@ pub fn tidy_account_dir(account: &Path, projects: &[(PathBuf, Vec<&Path>)]) -> R
 }
 
 /// Who a Claude Code config folder's login is, from its `.claude.json`.
-fn identity_in(config: &Path) -> Option<serde_json::Map<String, Value>> {
+fn identity_in(config: &Path) -> Option<Identity> {
     let value = read_claude_json(config);
-    let identity: serde_json::Map<_, _> = ["oauthAccount", "userID"]
+    let identity: Identity = ["oauthAccount", "userID"]
         .into_iter()
         .filter(|k| !value[k].is_null())
         .map(|k| (k.to_owned(), value[k].clone()))
@@ -259,7 +259,7 @@ fn identity_in(config: &Path) -> Option<serde_json::Map<String, Value>> {
     (!identity.is_empty()).then_some(identity)
 }
 
-pub type Identity = serde_json::Map<String, Value>;
+type Identity = serde_json::Map<String, Value>;
 
 /// Who a login is, kept beside it in its folder so the two always change together.
 const IDENTITY: &str = "identity.json";
@@ -315,30 +315,6 @@ pub fn copy_login_identity(login: &Path, own: &Path) -> Result<()> {
         config[k] = v;
     }
     write_claude_json(own, &config)
-}
-
-/// Keeps the login and who it is in step when a session signed in again itself: Claude Code
-/// wrote the new login to `login` and who it is to its own config folder, one of `configs` (the
-/// config folders sessions on this login use). Takes the newest identity there that differs from
-/// the login's as the login's, and gives it to all of `configs`. Returns it when it changed.
-pub fn sync_login_identity(login: &Path, configs: &[PathBuf]) -> Result<Option<Identity>> {
-    let stored = stored_identity(login);
-    let modified = |dir: &PathBuf| {
-        std::fs::metadata(dir.join(".claude.json"))
-            .and_then(|m| m.modified())
-            .ok()
-    };
-    let newer = configs
-        .iter()
-        .filter_map(|dir| Some((modified(dir)?, identity_in(dir)?)))
-        .filter(|(_, identity)| Some(identity) != stored.as_ref())
-        .max_by_key(|(when, _)| *when);
-    let Some((_, identity)) = newer else {
-        return Ok(None);
-    };
-    store_identity(login, &identity)?;
-    give_login_identity(login, configs)?;
-    Ok(Some(identity))
 }
 
 /// Puts who the login is into each of `configs` that exists.
@@ -608,35 +584,18 @@ mod tests {
     }
 
     #[test]
-    fn a_session_signing_in_again_moves_the_login_and_everyone_to_it() {
+    fn a_folder_left_from_another_account_gets_the_logins_identity_back() {
         let root = tempfile::tempdir().unwrap();
-        let login = root.path().join("login");
-        let (a, b, c) = (
-            root.path().join("a"),
-            root.path().join("b"),
-            root.path().join("c"),
-        );
-        claude_json(&root.path().join("first"), "old@b.c");
+        let (login, project) = (root.path().join("login"), root.path().join("project"));
+        claude_json(&root.path().join("first"), "mine@b.c");
         keep_login_identity(&login, &root.path().join("first")).unwrap();
-        for dir in [&a, &b, &c] {
-            claude_json(dir, "old@b.c");
-        }
-        let configs = [a.clone(), b.clone(), c.clone()];
-        assert_eq!(sync_login_identity(&login, &configs).unwrap(), None);
-
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        claude_json(&b, "new@b.c");
-        let changed = sync_login_identity(&login, &configs).unwrap().unwrap();
-        assert_eq!(changed["oauthAccount"]["emailAddress"], "new@b.c");
-        for dir in [&a, &b, &c] {
-            assert_eq!(email(dir), "new@b.c");
-        }
-        assert_eq!(read_claude_json(&a)["numStartups"], 1);
-
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(a.join("x"), "").unwrap();
-        assert_eq!(sync_login_identity(&login, &configs).unwrap(), None);
-        assert_eq!(email(&root.path().join("first")), "old@b.c");
+        claude_json(&project, "other@b.c");
+        copy_login_identity(&login, &project).unwrap();
+        assert_eq!(email(&project), "mine@b.c");
+        assert_eq!(
+            stored_identity(&login).unwrap()["oauthAccount"]["emailAddress"],
+            "mine@b.c"
+        );
     }
 
     #[test]
