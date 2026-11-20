@@ -558,8 +558,8 @@ export const api = {
   draftCommits: (worktreePath: string, files: string[], instructions: string, writer: Writer) =>
     invoke<CommitDraft[]>("draft_commits", { worktreePath, files, instructions, writer }),
   compareBase: (worktreePath: string, base: string) => invoke<string>("compare_base", { worktreePath, base }),
-  retargetBranch: (worktreePath: string, branch: string, previous: string, base: string) =>
-    invoke<void>("retarget_branch", { worktreePath, branch, previous, base }),
+  retargetBranch: (worktreePath: string, branch: string, base: string) =>
+    invoke<void>("retarget_branch", { worktreePath, branch, base }),
   fetchRemote: (worktreePath: string) => invoke<void>("fetch_remote", { worktreePath }),
   pushBranch: (worktreePath: string) => invoke<void>("push_branch", { worktreePath }),
   prReviewComments: (worktreePath: string, number: number) =>

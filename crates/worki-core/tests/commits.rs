@@ -63,6 +63,55 @@ async fn commits_only_the_picked_files() {
 }
 
 #[tokio::test]
+async fn commits_a_deletion_that_is_already_staged() {
+    let tmp = repo();
+    let dir = tmp.path();
+    let host = Host::Local;
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    git::commit(&host, dir, &["b.txt".into()], "Add b")
+        .await
+        .unwrap();
+    sh(dir, &["rm", "-q", "a.txt"]);
+    std::fs::remove_file(dir.join("b.txt")).unwrap();
+
+    git::commit(
+        &host,
+        dir,
+        &["a.txt".into(), "b.txt".into()],
+        "Remove a and b",
+    )
+    .await
+    .unwrap();
+
+    let left = host.git(dir, ["ls-files"]).await.unwrap();
+    assert_eq!(left.trim(), "");
+    let status = host.git(dir, ["status", "--porcelain"]).await.unwrap();
+    assert_eq!(status.trim(), "");
+}
+
+#[tokio::test]
+async fn a_staged_rename_lists_and_commits_both_paths() {
+    let tmp = repo();
+    let dir = tmp.path();
+    let host = Host::Local;
+    sh(dir, &["mv", "a.txt", "b.txt"]);
+
+    let status = git::status(&host, dir).await.unwrap();
+    let files: Vec<_> = status
+        .changed_files
+        .iter()
+        .map(|f| (f.code.as_str(), f.path.as_str()))
+        .collect();
+    assert_eq!(files, [("D ", "a.txt"), ("A ", "b.txt")]);
+
+    git::commit(&host, dir, &["a.txt".into(), "b.txt".into()], "Rename a")
+        .await
+        .unwrap();
+    let left = host.git(dir, ["status", "--porcelain"]).await.unwrap();
+    assert_eq!(left.trim(), "");
+}
+
+#[tokio::test]
 async fn compares_with_the_default_branch_once_the_base_is_gone() {
     let tmp = repo();
     let dir = tmp.path();
@@ -161,7 +210,7 @@ async fn update_from_base_rebases_or_reports_conflicts() {
 }
 
 #[tokio::test]
-async fn rebasing_onto_a_new_target_moves_only_the_branchs_own_commits() {
+async fn a_new_target_shows_and_rebases_everything_it_lacks() {
     let tmp = repo();
     let dir = tmp.path();
     let host = Host::Local;
@@ -173,60 +222,27 @@ async fn rebasing_onto_a_new_target_moves_only_the_branchs_own_commits() {
     sh(dir, &["reset", "-q", "--hard", "main"]);
     sh(dir, &["commit", "-q", "--allow-empty", "-m", "mine"]);
 
-    git::retarget_branch(&host, dir, "work", "main", "release")
+    git::set_branch_base(&host, dir, "work", "release")
         .await
         .unwrap();
-    let own = git::branch_log(&host, dir, Some("release")).await.unwrap();
+    let ahead = git::branch_log(&host, dir, Some("release")).await.unwrap();
     assert_eq!(
-        own.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
-        ["mine"]
+        ahead.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(),
+        ["mine", "main only"]
     );
     assert_eq!(
         git::update_from_base(&host, dir, "release").await.unwrap(),
         BaseUpdate::Updated
     );
-
     let log = Command::new("git")
         .args(["log", "--format=%s", "release..HEAD"])
         .current_dir(dir)
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "mine");
-    let left = Command::new("git")
-        .args(["config", "--get", "branch.work.workifrom"])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    assert!(!left.status.success());
-}
-
-#[tokio::test]
-async fn rebasing_forgets_where_the_work_started_once_rebased_elsewhere() {
-    let tmp = repo();
-    let dir = tmp.path();
-    let host = Host::Local;
-    sh(dir, &["checkout", "-q", "-b", "release", "main"]);
-    sh(dir, &["commit", "-q", "--allow-empty", "-m", "release fix"]);
-    sh(dir, &["checkout", "-q", "main"]);
-    sh(dir, &["commit", "-q", "--allow-empty", "-m", "main only"]);
-    sh(dir, &["checkout", "-q", "work"]);
-    sh(dir, &["reset", "-q", "--hard", "main"]);
-    sh(dir, &["commit", "-q", "--allow-empty", "-m", "mine"]);
-    git::retarget_branch(&host, dir, "work", "main", "release")
-        .await
-        .unwrap();
-    sh(dir, &["rebase", "-q", "--onto", "release", "main"]);
-
     assert_eq!(
-        git::update_from_base(&host, dir, "release").await.unwrap(),
-        BaseUpdate::UpToDate
+        String::from_utf8_lossy(&log.stdout).trim(),
+        "mine\nmain only"
     );
-    let log = Command::new("git")
-        .args(["log", "--format=%s", "release..HEAD"])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "mine");
 }
 
 fn diverge(dir: &Path) {
@@ -267,9 +283,11 @@ async fn status_has_no_conflicts_in_a_clean_worktree() {
 }
 
 #[tokio::test]
-async fn status_counts_against_the_pushed_branch_without_an_upstream() {
+async fn status_counts_against_where_a_push_goes() {
     let (tmp, _remote) = with_remote();
     let dir = tmp.path();
+    sh(dir, &["fetch", "-q", "origin"]);
+    sh(dir, &["branch", "-q", "--set-upstream-to", "origin/main"]);
     sh(dir, &["commit", "-q", "--allow-empty", "-m", "pushed"]);
     sh(dir, &["push", "-q", "origin", "work"]);
     sh(dir, &["commit", "-q", "--allow-empty", "-m", "not yet"]);

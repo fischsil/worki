@@ -84,72 +84,12 @@ fn parse_creation_times(text: &str) -> HashMap<PathBuf, i64> {
 /// when it's deleted.
 const BASE_KEY: &str = "workibase";
 
-/// Records what a new branch was started from; the branch is compared with it later.
+/// Records the branch's target: what it was started from, or picked later.
 pub async fn set_branch_base(host: &Host, repo: &Path, branch: &str, base: &str) -> Result<()> {
-    let key = branch_key(branch, BASE_KEY);
+    let key = format!("branch.{branch}.{BASE_KEY}");
     host.git(repo, ["config", "--local", &key, base])
         .await
         .map(drop)
-}
-
-fn branch_key(branch: &str, key: &str) -> String {
-    format!("branch.{branch}.{key}")
-}
-
-/// Where the branch's own commits start, kept from when its target changed until it's rebased
-/// onto the new one; without it a rebase would also carry over the old target's commits.
-const WORK_FROM_KEY: &str = "workifrom";
-
-/// Moves the branch from target `previous` to `base`, remembering where its own commits start.
-pub async fn retarget_branch(
-    host: &Host,
-    worktree: &Path,
-    branch: &str,
-    previous: &str,
-    base: &str,
-) -> Result<()> {
-    let key = branch_key(branch, WORK_FROM_KEY);
-    if host
-        .git(worktree, ["config", "--local", "--get", &key])
-        .await
-        .is_err()
-    {
-        if let Ok(fork) = fork_point(host, worktree, previous).await {
-            host.git(worktree, ["config", "--local", &key, &fork])
-                .await?;
-        }
-    }
-    set_branch_base(host, worktree, branch, base).await
-}
-
-/// The checked-out branch's `workifrom` key and commit, while that commit is still part of it.
-async fn work_from(host: &Host, worktree: &Path) -> Option<(String, String)> {
-    let pattern = format!(r"^branch\..*\.{WORK_FROM_KEY}$");
-    let all = host
-        .git(worktree, ["config", "--local", "--get-regexp", &pattern])
-        .await
-        .ok()?;
-    let branch = host
-        .git(worktree, ["symbolic-ref", "--short", "-q", "HEAD"])
-        .await
-        .ok()?;
-    let key = branch_key(branch.trim(), WORK_FROM_KEY);
-    let from = all
-        .lines()
-        .find_map(|line| line.strip_prefix(key.as_str())?.strip_prefix(' '))?
-        .trim()
-        .to_owned();
-    let ours = host
-        .git(worktree, ["merge-base", "--is-ancestor", &from, "HEAD"])
-        .await
-        .is_ok();
-    if !ours {
-        host.git(worktree, ["config", "--local", "--unset", &key])
-            .await
-            .ok();
-        return None;
-    }
-    Some((key, from))
 }
 
 /// What each branch was started from, by branch name.
@@ -341,6 +281,7 @@ pub async fn status(host: &Host, worktree: &Path) -> Result<WorktreeStatus> {
                 "--porcelain=v2",
                 "--branch",
                 "--untracked-files=all",
+                "--no-renames",
                 "-z",
             ],
         )
@@ -350,14 +291,9 @@ pub async fn status(host: &Host, worktree: &Path) -> Result<WorktreeStatus> {
         status.stopped = stopped_operation(host, worktree).await;
     }
     drop_sandbox_placeholders(host, worktree, &mut status.changed_files);
-    let pushed = status
-        .upstream
-        .is_none()
-        .then(|| status_branch(&porcelain))
-        .flatten()
-        .map(|branch| format!("origin/{branch}"));
+    let pushed = status_branch(&porcelain).map(|branch| format!("origin/{branch}"));
     let (totals, counts) = tokio::join!(
-        count_lines(host, worktree, "HEAD", &mut status.changed_files),
+        count_lines(host, worktree, "HEAD", false, &mut status.changed_files),
         async {
             match &pushed {
                 Some(remote) => ahead_behind(host, worktree, remote).await.ok(),
@@ -445,19 +381,7 @@ pub fn parse_status_v2(text: &str) -> WorktreeStatus {
                 ..ChangedFile::default()
             })
         };
-        if let Some(header) = entry.strip_prefix("# ") {
-            if let Some(upstream) = header.strip_prefix("branch.upstream ") {
-                status.upstream = Some(upstream.into());
-            } else if let Some(ab) = header.strip_prefix("branch.ab ") {
-                for part in ab.split(' ') {
-                    if let Some(n) = part.strip_prefix('+') {
-                        status.ahead = n.parse().unwrap_or(0);
-                    } else if let Some(n) = part.strip_prefix('-') {
-                        status.behind = n.parse().unwrap_or(0);
-                    }
-                }
-            }
-        } else if let Some(rest) = entry.strip_prefix("1 ") {
+        if let Some(rest) = entry.strip_prefix("1 ") {
             if let Some((xy, path)) = code_and_path(rest, 8) {
                 push(xy, path);
             }
@@ -566,16 +490,7 @@ pub async fn file_diff(
     Ok(text)
 }
 
-/// Where the branch's own commits start: where it left `base`, or where it left its previous
-/// target when that changed since the last rebase.
 async fn merge_base(host: &Host, worktree: &Path, base: &str) -> Result<String> {
-    match work_from(host, worktree).await {
-        Some((_, from)) => Ok(from),
-        None => fork_point(host, worktree, base).await,
-    }
-}
-
-async fn fork_point(host: &Host, worktree: &Path, base: &str) -> Result<String> {
     Ok(host
         .git(worktree, ["merge-base", "HEAD", base])
         .await?
@@ -746,7 +661,7 @@ pub async fn branch_changes(host: &Host, worktree: &Path, base: &str) -> Result<
             }),
     );
     drop_sandbox_placeholders(host, worktree, &mut files);
-    let (insertions, deletions) = count_lines(host, worktree, &from, &mut files).await?;
+    let (insertions, deletions) = count_lines(host, worktree, &from, true, &mut files).await?;
     let commits = host
         .git(worktree, ["rev-list", "--count", &format!("{from}..HEAD")])
         .await?
@@ -783,9 +698,24 @@ pub async fn commit(
             stderr: "pick at least one file and write a message".into(),
         });
     }
-    let mut add = vec!["add", "-A", "--"];
-    add.extend(files.iter().map(String::as_str));
-    host.git(worktree, &add).await?;
+    // A deletion staged already (`git rm`) is in neither the index nor the worktree, so
+    // `git add` rejects its path; `git commit -- <path>` still records it.
+    let mut known = vec![
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+    ];
+    known.extend(files.iter().map(String::as_str));
+    let known = host.git(worktree, &known).await?;
+    let known: Vec<&str> = known.split('\0').filter(|f| !f.is_empty()).collect();
+    if !known.is_empty() {
+        let mut add = vec!["add", "-A", "--"];
+        add.extend(known);
+        host.git(worktree, &add).await?;
+    }
     let mut commit = vec!["commit", "-q", "-m", message.trim(), "--"];
     commit.extend(files.iter().map(String::as_str));
     host.git(worktree, &commit).await?;
@@ -876,19 +806,10 @@ pub async fn fetch(host: &Host, worktree: &Path) -> Result<()> {
 /// conflicts the rebase is undone and the conflicting files are reported.
 pub async fn update_from_base(host: &Host, worktree: &Path, base: &str) -> Result<BaseUpdate> {
     let before = host.git(worktree, ["rev-parse", "HEAD"]).await?;
-    let work_from = work_from(host, worktree).await;
-    let mut args = vec!["rebase", "--autostash"];
-    match &work_from {
-        Some((_, from)) => args.extend(["--onto", base, from]),
-        None => args.push(base),
-    }
-    let (_, out) = host.git_output(worktree, args).await?;
+    let (_, out) = host
+        .git_output(worktree, ["rebase", "--autostash", base])
+        .await?;
     if out.status.success() {
-        if let Some((key, _)) = &work_from {
-            host.git(worktree, ["config", "--local", "--unset", key])
-                .await
-                .ok();
-        }
         let after = host.git(worktree, ["rev-parse", "HEAD"]).await?;
         return Ok(if after == before {
             BaseUpdate::UpToDate
@@ -921,13 +842,21 @@ async fn count_lines(
     host: &Host,
     worktree: &Path,
     from: &str,
+    renames: bool,
     files: &mut [ChangedFile],
 ) -> Result<(u32, u32)> {
     let counts = parse_numstat(
         &host
             .git(
                 worktree,
-                ["diff", from, "--numstat", "-z", "-M", "--no-ext-diff"],
+                [
+                    "diff",
+                    from,
+                    "--numstat",
+                    "-z",
+                    if renames { "-M" } else { "--no-renames" },
+                    "--no-ext-diff",
+                ],
             )
             .await?,
     );
@@ -1134,8 +1063,6 @@ mod tests {
                     u UU N... 100644 100644 100644 100644 a b c both.rs\0\
                     ? notes.txt\0";
         let s = parse_status_v2(text);
-        assert_eq!((s.ahead, s.behind), (2, 1));
-        assert_eq!(s.upstream.as_deref(), Some("origin/feat"));
         let files: Vec<_> = s
             .changed_files
             .iter()

@@ -1,11 +1,12 @@
 import clsx from "clsx";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { Coins, GitBranch, GitCompareArrows, MoreHorizontal, Send, SquareTerminal, X } from "lucide-react";
+import { ArrowUp, Coins, GitBranch, GitCompareArrows, MoreHorizontal, Send, SquareTerminal, X } from "lucide-react";
 
 import { branchName, type ChangedFile, errorMessage, type Project, remoteDefaultBase, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
 import { type ReviewComment, reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
 import { useUi } from "../lib/store";
+import { plural } from "../lib/text";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
 import { BranchCommits, BranchStatus, CommitBox, ConflictBox, PrSection, Section } from "./BranchPanel";
 import { DiffView } from "./DiffView";
@@ -158,6 +159,22 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                         {status.changedFiles.length}
                       </span>
                     )}
+                    {t === "branch" && status?.upstream && status.ahead > 0 && (
+                      <span
+                        className={clsx(
+                          "flex items-center gap-0.5 fs-panel-sm font-medium",
+                          status.behind > 0 ? "text-warn" : "text-accent",
+                        )}
+                        title={
+                          status.behind > 0
+                            ? `Rebased: force push to replace ${status.upstream}`
+                            : `${plural(status.ahead, "commit")} to push to ${status.upstream}`
+                        }
+                      >
+                        <ArrowUp size={11} />
+                        {status.ahead}
+                      </span>
+                    )}
                   </button>
                 ))}
               <IconButton label="Close (⌘J)" onClick={toggleChanges} className="ml-auto">
@@ -284,7 +301,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (co
           Discard
         </button>
       </div>
-      <div className="flex flex-col">
+      <div className="-mx-1 flex max-h-32 flex-col overflow-y-auto px-1">
         {onLines.map((c) => (
           <button
             key={c.id}

@@ -329,7 +329,7 @@ export function BranchStatus({
   async function retarget(newBase: string) {
     if (newBase !== base) {
       try {
-        await api.retargetBranch(worktreePath, branch, base, newBase);
+        await api.retargetBranch(worktreePath, branch, newBase);
         setFailed(null);
         await qc.invalidateQueries({ queryKey: keys.worktrees(projectId) });
       } catch (e) {
@@ -342,7 +342,7 @@ export function BranchStatus({
     if (!isRemoteBranch(newBase) || pr?.state !== "OPEN" || pr.base === into) return;
     try {
       await api.setPullRequestBase(worktreePath, pr.number, into);
-      toast(`Pull request #${pr.number} now merges into ${into}`, "info");
+      toast(`Pull request #${pr.number} now targets origin/${into}`, "info");
     } catch (e) {
       toast(`Couldn't make pull request #${pr.number} merge into ${into}: ${errorMessage(e)}`);
     }
@@ -545,7 +545,8 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   const addComment = useReview((s) => s.add);
 
   const rewrites = (status?.behind ?? 0) > 0;
-  const remote = status?.upstream ?? `origin/${worktree.branch}`;
+  const unpushed = pr?.state === "OPEN" ? (status?.ahead ?? 0) : 0;
+  const remote = `origin/${worktree.branch}`;
   const target = branchName(base);
 
   async function push() {
@@ -655,14 +656,20 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
           </button>
           {pr.state === "OPEN" && (
             <p className={clsx("fs-panel-sm", pr.base === target ? "text-faint" : "text-warn")}>
-              Merges into <span className="font-mono">{pr.base}</span>
+              Targets <span className="font-mono">origin/{pr.base}</span>
               {pr.base !== target &&
-                `, not the target ${target}.${isRemoteBranch(base) ? " Pick the target again to move it." : ""}`}
+                `, but this branch targets ${base}.${isRemoteBranch(base) ? " Pick the target again to move it." : ""}`}
             </p>
           )}
           <Checks pr={pr} />
+          {unpushed > 0 && (
+            <p className={clsx("fs-panel-sm", rewrites ? "text-warn" : "text-faint")}>
+              {rewrites ? "Force pushes over " : "Pushes to "}
+              <span className="font-mono">{remote}</span>
+            </p>
+          )}
           <div className="mt-1 flex flex-wrap gap-2">
-            {pr.state === "OPEN" && (status?.ahead ?? 0) > 0 && (
+            {unpushed > 0 && (
               <Button
                 onClick={push}
                 disabled={busy}
@@ -670,7 +677,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
                 title={rewrites ? `Overwrites ${remote} on GitHub with the rebased branch` : undefined}
               >
                 <ArrowUpFromLine size={13} />
-                {rewrites ? "Force push rebased branch…" : `Push ${plural(status!.ahead, "commit")}`}
+                {rewrites ? "Force push…" : `Push ${plural(unpushed, "commit")}`}
               </Button>
             )}
             {pr.state === "OPEN" && (
@@ -817,7 +824,7 @@ function CreatePrDialog({
       }
     >
       <p className="text-xs text-muted">
-        Pushes <span className="font-mono text-fg">{worktree.branch}</span> to origin and opens a pull request into{" "}
+        Pushes to <span className="font-mono text-fg">origin/{worktree.branch}</span> and opens a pull request into{" "}
         <span className="font-mono text-fg">{target}</span> with the GitHub CLI.
       </p>
       <Field label="Title">

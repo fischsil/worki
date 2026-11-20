@@ -442,12 +442,11 @@ pub async fn retarget_branch(
     state: State<'_, AppState>,
     worktree_path: PathBuf,
     branch: String,
-    previous: String,
     base: String,
 ) -> CmdResult<()> {
     state
         .projects
-        .retarget_branch(&worktree_path, &branch, &previous, &base)
+        .retarget_branch(&worktree_path, &branch, &base)
         .await
         .map_err(err)
 }

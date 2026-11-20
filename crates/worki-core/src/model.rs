@@ -122,8 +122,10 @@ pub struct WorktreeStatus {
     pub changed_files: Vec<ChangedFile>,
     pub insertions: u32,
     pub deletions: u32,
+    /// Commits HEAD has that `upstream` lacks, and the other way around.
     pub ahead: u32,
     pub behind: u32,
+    /// `origin/<branch>`, where a push goes, once the branch is there.
     pub upstream: Option<String>,
     /// Files git couldn't merge, waiting to be resolved.
     #[serde(default)]

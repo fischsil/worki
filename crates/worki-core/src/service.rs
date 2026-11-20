@@ -1232,18 +1232,12 @@ impl ProjectService {
     }
 
     /// Changes what a worktree's branch is compared with, rebased onto and merged into.
-    pub async fn retarget_branch(
-        &self,
-        worktree: &Path,
-        branch: &str,
-        previous: &str,
-        base: &str,
-    ) -> Result<()> {
+    pub async fn retarget_branch(&self, worktree: &Path, branch: &str, base: &str) -> Result<()> {
         let host = self.host_for_path(worktree)?;
         if !git::ref_exists(&host, worktree, base).await {
             return Err(Error::UnknownRef(base.into()));
         }
-        git::retarget_branch(&host, worktree, branch, previous, base).await
+        git::set_branch_base(&host, worktree, branch, base).await
     }
 
     pub async fn fetch(&self, worktree: &Path) -> Result<()> {
