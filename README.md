@@ -180,16 +180,22 @@ worki starts again. The status bar details (model, context, token usage) are Cla
 
 - **Commit** the files you pick from the **Changes** tab, or let the agent write the commit
   messages.
-- **Branch** tab: how the branch stands against the branch it was started from, with **Rebase** (it fetches
-  first; on conflicts nothing changes and the agent can resolve them), the branch's commits and
-  every file it touched.
+- **Branch** tab: how the branch stands against its target (what it was started from, or one you
+  pick later), with **Rebase** (it fetches first; on conflicts nothing changes and the agent can
+  resolve them), the branch's commits and every file it touched. A badge on the tab shows
+  commits waiting to be pushed, and the panel always says where a push goes (`origin/<branch>`),
+  in orange when it overwrites.
 - **Pull requests** through the GitHub CLI: create one, follow its checks, push new commits, and
   pull review comments into worki to send them to the agent. The sidebar shows each worktree's
   pull request (open, draft, merged or closed) and marks failed checks.
+- **Open pull requests in the sidebar.** Each project lists your pull requests and the ones you're
+  asked to review. Click one without a worktree and worki checks it out into a new one, forks
+  included.
 - **Review in place.** Comment on any diff line, expand hidden context, and send the comments to
   the agent as one review.
 
-Commits and pull requests can be turned off under Settings › Git. Pull requests need
+Commits and pull requests can be turned off under Settings › Git, and the sidebar's pull request
+lists under Settings › General. Pull requests need
 [`gh`](https://cli.github.com) installed and signed in (`gh auth login`).
 
 ## Everything around it
