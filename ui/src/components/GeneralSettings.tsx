@@ -11,6 +11,8 @@ export function GeneralSettings() {
   const autoUpdate = useUi((s) => s.autoUpdate);
   const setAutoUpdate = useUi((s) => s.setAutoUpdate);
   const updates = useUpdates();
+  const showPullRequests = useUi((s) => s.showPullRequests);
+  const setShowPullRequests = useUi((s) => s.setShowPullRequests);
   const reopen = useUi((s) => s.reopenSessions);
   const setReopen = useUi((s) => s.setReopenSessions);
   const [keepAwake, setKeepAwake] = useKeepAwake();
@@ -54,6 +56,16 @@ export function GeneralSettings() {
                     : null}
             </span>
           </div>
+        </Group>
+
+        <Group title="Sidebar">
+          <Checkbox
+            checked={showPullRequests}
+            onChange={setShowPullRequests}
+            hint="Lists the open pull requests you wrote or review under each project. One without a worktree is greyed out; clicking it creates one. Uses the GitHub CLI (gh)."
+          >
+            <span className="text-[13px]">Show open pull requests</span>
+          </Checkbox>
         </Group>
 
         <Group title="Startup and quit">

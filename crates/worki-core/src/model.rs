@@ -284,6 +284,24 @@ pub struct PullRequest {
     pub checks_pending: u32,
 }
 
+/// An open pull request the user wrote, or one they review: asked to, or already did.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    /// The branch with the changes.
+    pub branch: String,
+    /// The branch it merges into.
+    pub base: String,
+    /// Approved by the reviews the base branch requires.
+    pub approved: bool,
+    /// The user wrote it; otherwise they review it.
+    pub authored: bool,
+}
+
 /// A check that failed on a pull request, with the end of its log where GitHub Actions ran it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +353,17 @@ pub struct CreateWorktree {
     /// The new worktree's isolation; `Inherit` (the default) follows the project default.
     #[serde(default)]
     pub isolation: ProjectIsolation,
+}
+
+/// A worktree with a pull request's branch checked out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrWorktree {
+    pub number: u64,
+    /// The pull request's branch, which also names the worktree folder.
+    pub branch: String,
+    /// The branch the pull request merges into.
+    pub base: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

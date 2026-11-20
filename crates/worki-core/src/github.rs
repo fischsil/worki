@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::host::Host;
-use crate::model::{FailedCheck, PrComment, PrDraft, PullRequest};
+use crate::model::{FailedCheck, OpenPullRequest, PrComment, PrDraft, PullRequest};
 use crate::{Error, Result};
 
 async fn gh(host: &Host, worktree: &Path, args: &[&str]) -> Result<String> {
@@ -105,6 +105,80 @@ pub fn parse_pr(json: &str) -> Result<PullRequest> {
         checks_failed: failed,
         checks_pending: pending,
     })
+}
+
+const OPEN_PR_FIELDS: &str = "number,title,url,author,headRefName,baseRefName,reviewDecision";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListedPr {
+    number: u64,
+    title: String,
+    url: String,
+    #[serde(default)]
+    author: Option<ApiUser>,
+    head_ref_name: String,
+    base_ref_name: String,
+    #[serde(default)]
+    review_decision: Option<String>,
+}
+
+/// Open pull requests in the repository that the user wrote, was asked to review or reviewed
+/// already (GitHub drops the request once the review is in), newest first.
+pub async fn open_pull_requests(host: &Host, repo: &Path) -> Result<Vec<OpenPullRequest>> {
+    let list = |filter: &'static [&'static str]| async move {
+        let mut args = vec![
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "50",
+            "--json",
+            OPEN_PR_FIELDS,
+        ];
+        args.extend_from_slice(filter);
+        gh(host, repo, &args).await
+    };
+    let (authored, requested, reviewed) = tokio::join!(
+        list(&["--author", "@me"]),
+        list(&["--search", "review-requested:@me"]),
+        list(&["--search", "reviewed-by:@me"])
+    );
+    merge_open_prs(&authored?, &[&requested?, &reviewed?])
+}
+
+fn merge_open_prs(authored: &str, reviewing: &[&str]) -> Result<Vec<OpenPullRequest>> {
+    let convert = |pr: ListedPr, authored: bool| OpenPullRequest {
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        author: pr.author.map(|u| u.login).unwrap_or_default(),
+        branch: pr.head_ref_name,
+        base: pr.base_ref_name,
+        approved: pr.review_decision.as_deref() == Some("APPROVED"),
+        authored,
+    };
+    let mut all: Vec<OpenPullRequest> = serde_json::from_str::<Vec<ListedPr>>(authored)?
+        .into_iter()
+        .map(|pr| convert(pr, true))
+        .collect();
+    for json in reviewing {
+        for pr in serde_json::from_str::<Vec<ListedPr>>(json)? {
+            if !all.iter().any(|p| p.number == pr.number) {
+                all.push(convert(pr, false));
+            }
+        }
+    }
+    all.sort_by_key(|p| std::cmp::Reverse(p.number));
+    Ok(all)
+}
+
+/// Checks out the pull request's branch in `worktree`, from a fork too, tracking its remote branch.
+pub async fn checkout_pull_request(host: &Host, worktree: &Path, number: u64) -> Result<()> {
+    gh(host, worktree, &["pr", "checkout", &number.to_string()])
+        .await
+        .map(drop)
 }
 
 /// Makes the pull request merge into `base`.
@@ -616,6 +690,34 @@ BUILD FAILED in 8m 13s\nProcess completed with exit code 1.\n…\nFailed test we
         assert_eq!(draft.body, "## Summary\n- webhooks {x}");
         assert_eq!(parse_draft("no json here"), None);
         assert_eq!(parse_draft(r#"{"title": " ", "body": "x"}"#), None);
+    }
+
+    #[test]
+    fn merges_authored_and_reviewing_prs() {
+        let pr = |n: u64, author: &str, decision: &str| {
+            format!(
+                r#"{{"number":{n},"title":"T{n}","url":"u{n}","author":{{"login":"{author}"}},"headRefName":"b{n}","baseRefName":"main","reviewDecision":"{decision}"}}"#
+            )
+        };
+        let mine = pr(7, "me", "");
+        let theirs = pr(9, "ana", "REVIEW_REQUIRED");
+        let authored = format!("[{mine}]");
+        let requested = format!("[{theirs},{mine}]");
+        let reviewed = format!("[{},{theirs}]", pr(8, "bo", "APPROVED"));
+        let prs = merge_open_prs(&authored, &[&requested, &reviewed]).unwrap();
+        let summary: Vec<_> = prs
+            .iter()
+            .map(|p| (p.number, p.branch.as_str(), p.authored, p.approved))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (9, "b9", false, false),
+                (8, "b8", false, true),
+                (7, "b7", true, false)
+            ]
+        );
+        assert_eq!(prs[0].author, "ana");
     }
 
     #[test]

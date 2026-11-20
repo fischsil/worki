@@ -80,6 +80,8 @@ interface UiState {
   agentView: SessionKind;
   /** Look for new worki releases on start and every few hours. */
   autoUpdate: boolean;
+  /** Groups each project's worktrees by open pull request: the user's and the ones they review. */
+  showPullRequests: boolean;
   /** The branch's commit list is open, not folded to its heading. */
   commitListOpen: boolean;
   dialog: DialogState;
@@ -105,6 +107,7 @@ interface UiState {
   setReopenSessions: (on: boolean) => void;
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
+  setShowPullRequests: (on: boolean) => void;
   setCommitListOpen: (open: boolean) => void;
   openDialog: (dialog: DialogState) => void;
   closeDialog: () => void;
@@ -141,6 +144,7 @@ export const useUi = create<UiState>()(
       reopenSessions: true,
       agentView: "terminal",
       autoUpdate: true,
+      showPullRequests: true,
       commitListOpen: false,
       dialog: null,
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
@@ -179,6 +183,7 @@ export const useUi = create<UiState>()(
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
+      setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       setCommitListOpen: (commitListOpen) => set({ commitListOpen }),
       openDialog: (dialog) => set({ dialog }),
       closeDialog: () => set({ dialog: null }),
@@ -204,6 +209,7 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
+        showPullRequests,
         commitListOpen,
         prDrafts,
         askPrompts,
@@ -227,6 +233,7 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
+        showPullRequests,
         commitListOpen,
         prDrafts,
         askPrompts,

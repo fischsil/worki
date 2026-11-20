@@ -186,6 +186,8 @@ pub fn run() {
             openers::open_in_app,
             openers::app_icon,
             commands::create_worktree,
+            commands::create_pr_worktree,
+            commands::open_pull_requests,
             commands::remove_worktree,
             commands::agent_settings,
             commands::save_agent_profiles,

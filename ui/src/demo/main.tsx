@@ -650,16 +650,25 @@ function handle(cmd: string, args: Record<string, any>): unknown {
           log: "> Task :web:test\n\nCartSummary > renders the total in the user's currency FAILED\n    AssertionError: expected '$12.00' to equal 'CHF 12.00'\n\n1 failed, 214 passed\nProcess completed with exit code 1.",
         },
       ];
+    case "open_pull_requests":
+      return args.projectId === "acme-web"
+        ? [
+            { number: 47, title: "Add dark mode to the settings page", url: "https://github.com/acme/web/pull/47", author: "ana", branch: "settings-dark-mode", base: "main", approved: true, authored: false },
+            { number: 46, title: "Cache product images", url: "https://github.com/acme/web/pull/46", author: "you", branch: "image-cache", base: "main", approved: false, authored: true },
+            { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", author: "ana", branch: "chore/react-19", base: "main", approved: true, authored: false },
+            { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", author: "you", branch: "feat/checkout-redesign", base: "main", approved: true, authored: true },
+          ]
+        : [];
     case "set_pull_request_base":
       prBase = args.base;
       return null;
     case "pull_request":
       if (args.worktreePath === checkout)
-        return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, base: prBase, checksPassed: 3, checksFailed: 0, checksPending: 1 };
+        return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", base: prBase, checksPassed: 3, checksFailed: 0, checksPending: 1 };
       if (args.worktreePath === worktrees["acme-web"][2].path)
-        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", isDraft: false, base: "main", checksPassed: 3, checksFailed: 0, checksPending: 0 };
+        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", base: "main", checksPassed: 3, checksFailed: 0, checksPending: 0 };
       if (args.worktreePath === worktrees["acme-web"][3].path)
-        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, base: "main", checksPassed: 3, checksFailed: 0, checksPending: 0 };
+        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", base: "main", checksPassed: 3, checksFailed: 0, checksPending: 0 };
       return null;
     case "file_diff":
       return diff;

@@ -256,6 +256,13 @@ pub async fn add_worktree(
     })
 }
 
+pub async fn add_detached_worktree(host: &Host, repo: &Path, path: &Path) -> Result<()> {
+    let path = path.to_string_lossy();
+    host.git(repo, ["worktree", "add", "--detach", &path, "HEAD"])
+        .await
+        .map(drop)
+}
+
 pub async fn remove_worktree(host: &Host, repo: &Path, path: &Path, force: bool) -> Result<()> {
     let path = path.to_string_lossy();
     let mut args = vec!["worktree", "remove"];

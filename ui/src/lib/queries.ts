@@ -40,6 +40,7 @@ export const keys = {
   sshHosts: ["sshHosts"] as const,
   branchLog: (path: string, base: string) => ["branchLog", path, base] as const,
   pullRequest: (path: string) => ["pullRequest", path] as const,
+  openPullRequests: (projectId: string) => ["openPullRequests", projectId] as const,
   environmentTemplates: (kind: string) => ["environmentTemplates", kind] as const,
   snapshots: ["environmentTemplates", "snapshots"] as const,
   snapshotCleanup: ["snapshotCleanup"] as const,
@@ -74,6 +75,15 @@ export const usePullRequest = (worktreePath: string, enabled: boolean) =>
     queryFn: () => api.pullRequest(worktreePath),
     enabled,
     refetchInterval: 60_000,
+    retry: false,
+  });
+
+export const useOpenPullRequests = (projectId: string, enabled: boolean) =>
+  useQuery({
+    queryKey: keys.openPullRequests(projectId),
+    queryFn: () => api.openPullRequests(projectId),
+    enabled,
+    refetchInterval: 120_000,
     retry: false,
   });
 

@@ -200,6 +200,22 @@ export interface CommitInfo {
 
 export type BaseUpdate = { kind: "upToDate" } | { kind: "updated" } | { kind: "conflicts"; files: string[] };
 
+/** An open pull request the user wrote, or one they review: asked to, or already did. */
+export interface OpenPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  /** The branch with the changes. */
+  branch: string;
+  /** The branch it merges into. */
+  base: string;
+  /** Approved by the reviews the base branch requires. */
+  approved: boolean;
+  /** The user wrote it; otherwise they review it. */
+  authored: boolean;
+}
+
 export interface PullRequest {
   number: number;
   title: string;
@@ -582,6 +598,9 @@ export const api = {
     projectId: string,
     req: { name: string; base: string; runSetup: boolean; isolation: ProjectIsolation },
   ) => invoke<CreatedWorktree>("create_worktree", { projectId, req }),
+  openPullRequests: (projectId: string) => invoke<OpenPullRequest[]>("open_pull_requests", { projectId }),
+  createPrWorktree: (projectId: string, req: { number: number; branch: string; base: string }) =>
+    invoke<CreatedWorktree>("create_pr_worktree", { projectId, req }),
   activities: () => invoke<Operation[]>("activities"),
   warmWorktree: (projectId: string, worktreePath: string) =>
     invoke<void>("warm_worktree", { projectId, worktreePath }),

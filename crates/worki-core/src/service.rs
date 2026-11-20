@@ -1201,6 +1201,11 @@ impl ProjectService {
         git::list_worktrees(&Host::of(&p), &p.repo_path).await
     }
 
+    pub async fn open_pull_requests(&self, id: &str) -> Result<Vec<OpenPullRequest>> {
+        let p = self.store.get_project(id)?;
+        github::open_pull_requests(&Host::of(&p), &p.repo_path).await
+    }
+
     pub async fn list_branches(&self, id: &str) -> Result<Vec<String>> {
         let p = self.store.get_project(id)?;
         git::list_branches(&Host::of(&p), &p.repo_path).await
@@ -1412,20 +1417,81 @@ impl ProjectService {
             base: Some(base.to_owned()),
             ..find_worktree(host, repo, &path).await?
         };
-        self.forget_sessions_in(&worktree.path)?;
         if req.isolation != ProjectIsolation::Inherit {
             self.set_worktree_choice(&worktree.path, req.isolation)?;
         }
-        let isolation = self.isolation_for_worktree(&project, &worktree.path)?;
+        self.prepare_worktree(&project, worktree, req.run_setup, log)
+            .await
+    }
+
+    /// Creates a worktree with the pull request's branch checked out, starting from what's
+    /// pushed, and compares it with the branch the pull request merges into.
+    pub async fn create_pr_worktree(
+        &self,
+        id: &str,
+        req: CreatePrWorktree,
+        log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
+    ) -> Result<CreatedWorktree> {
+        let project = self.store.get_project(id)?;
+        let host = &Host::of(&project);
+        let repo = &project.repo_path;
+        let path = Self::new_worktree_path(&project, &req.branch);
+        if host.exists(&path).await? {
+            return Err(Error::PathExists(path));
+        }
+        host.create_dir_all(&project.worktree_root).await?;
+
+        log(LogLine::Info(format!(
+            "Creating worktree {} for pull request #{} ({})",
+            path.display(),
+            req.number,
+            req.branch
+        )));
+        git::add_detached_worktree(host, repo, &path).await?;
+        if let Err(e) = github::checkout_pull_request(host, &path, req.number).await {
+            git::remove_worktree(host, repo, &path, true).await.ok();
+            return Err(e);
+        }
+        let worktree = find_worktree(host, repo, &path).await?;
+        let branch = worktree.branch.clone().ok_or_else(|| Error::Git {
+            args: "gh pr checkout".into(),
+            stderr: "the pull request's branch wasn't checked out".into(),
+        })?;
+        let remote_base = format!("origin/{}", req.base);
+        let base = if git::ref_exists(host, repo, &remote_base).await {
+            remote_base
+        } else {
+            req.base
+        };
+        git::set_branch_base(host, repo, &branch, &base).await?;
+        let worktree = Worktree {
+            base: Some(base),
+            ..worktree
+        };
+        self.prepare_worktree(&project, worktree, true, log).await
+    }
+
+    /// Gives a new worktree's isolation access to it and runs the setup script.
+    async fn prepare_worktree(
+        &self,
+        project: &Project,
+        worktree: Worktree,
+        run_setup: bool,
+        log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
+    ) -> Result<CreatedWorktree> {
+        let id = &project.id;
+        let repo = &project.repo_path;
+        self.forget_sessions_in(&worktree.path)?;
+        let isolation = self.isolation_for_worktree(project, &worktree.path)?;
         if isolation != Isolation::None {
             log(LogLine::Info(format!(
                 "Giving {} access to this worktree…",
                 isolation.label()
             )));
-            self.grant_access(&project, Some(&worktree.path)).await?;
+            self.grant_access(project, Some(&worktree.path)).await?;
         }
         let mut setup_error = None;
-        if req.run_setup {
+        if run_setup {
             if let Some(script) = self.setup_scripts(id).await?.effective() {
                 log(LogLine::Info(format!(
                     "Running setup script as {}…",
@@ -1434,7 +1500,10 @@ impl ProjectService {
                 let mut env = vec![
                     ("WORKI_ROOT_PATH".to_string(), path_key(repo)),
                     ("WORKI_WORKTREE_PATH".to_string(), path_key(&worktree.path)),
-                    ("WORKI_BRANCH".to_string(), branch.to_string()),
+                    (
+                        "WORKI_BRANCH".to_string(),
+                        worktree.branch.clone().unwrap_or_default(),
+                    ),
                 ];
                 env.extend(self.secret_env(Some(id), &isolation)?);
                 if let Err(e) =

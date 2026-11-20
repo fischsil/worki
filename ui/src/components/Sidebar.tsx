@@ -1,8 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import {
   ArrowDownToLine,
   BellRing,
+  CircleCheck,
   CircleX,
   Coffee,
   ChevronRight,
@@ -10,6 +12,7 @@ import {
   MessageSquare,
   FolderGit2,
   GitBranch,
+  GitPullRequest,
   House,
   LoaderCircle,
   Pencil,
@@ -27,6 +30,7 @@ import {
   api,
   errorMessage,
   isContainer,
+  type OpenPullRequest,
   type Project,
   projectIsolation,
   type PullRequest,
@@ -40,6 +44,7 @@ import {
   useAddProject,
   useAgentSettings,
   useIsolationSettings,
+  useOpenPullRequests,
   useProjects,
   usePullRequest,
   useSessions,
@@ -159,6 +164,11 @@ function ProjectNode({ project }: { project: Project }) {
   const openDialog = useUi((s) => s.openDialog);
   const { data: worktrees = [], error } = useWorktrees(project.id);
   const account = useProjectAccount(project);
+  const showPullRequests = useUi((s) => s.showPullRequests);
+  const { data: prs = [] } = useOpenPullRequests(project.id, showPullRequests);
+  const openPrs = showPullRequests ? prs : [];
+  const prBranches = new Set(openPrs.map((pr) => pr.branch));
+  const unassigned = worktrees.filter((w) => w.isMain || !w.branch || !prBranches.has(w.branch));
   const qc = useQueryClient();
   const [fetching, setFetching] = useState(false);
 
@@ -168,7 +178,15 @@ function ProjectNode({ project }: { project: Project }) {
       await api.fetchRemote(project.repoPath);
       await qc.invalidateQueries({
         predicate: ({ queryKey: [kind] }) =>
-          ["branches", "compareBase", "branchLog", "branchChanges", "status", "pullRequest"].includes(kind as string),
+          [
+            "branches",
+            "compareBase",
+            "branchLog",
+            "branchChanges",
+            "status",
+            "pullRequest",
+            "openPullRequests",
+          ].includes(kind as string),
       });
     } catch (e) {
       toast(`Couldn't fetch ${project.name}: ${errorMessage(e)}`);
@@ -178,7 +196,7 @@ function ProjectNode({ project }: { project: Project }) {
   }
 
   return (
-    <div className="mb-1">
+    <div className="mb-4">
       <div className="group flex h-7 items-center gap-1 rounded-md pr-1 pl-1 hover:bg-hover">
         <button className="flex min-w-0 flex-1 items-center gap-1" onClick={() => toggle(project.id)}>
           <ChevronRight size={13} className={clsx("shrink-0 text-faint transition-transform", !collapsed && "rotate-90")} />
@@ -217,9 +235,9 @@ function ProjectNode({ project }: { project: Project }) {
         </div>
       </div>
       {!collapsed && (
-        <div className="mt-0.5 flex flex-col gap-px">
+        <div className="mt-1 flex flex-col gap-0.5">
           {error && <p className="px-7 py-1 fs-sidebar-xs text-removed">{String(error)}</p>}
-          {worktrees.map((wt) => (
+          {unassigned.map((wt) => (
             <WorktreeRow key={wt.path} project={project} worktree={wt} />
           ))}
           <button
@@ -229,13 +247,132 @@ function ProjectNode({ project }: { project: Project }) {
             <Plus size={13} />
             New worktree
           </button>
+          <PullRequestSection
+            id="mine"
+            title="My pull requests"
+            project={project}
+            worktrees={worktrees}
+            prs={openPrs.filter((pr) => pr.authored)}
+          />
+          <PullRequestSection
+            id="reviewing"
+            title="Reviewing"
+            project={project}
+            worktrees={worktrees}
+            prs={openPrs.filter((pr) => !pr.authored)}
+          />
         </div>
       )}
     </div>
   );
 }
 
-function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktree }) {
+/** Pull requests with a worktree show as one; the others are greyed out until clicked. */
+function PullRequestSection({
+  id,
+  title,
+  project,
+  worktrees,
+  prs,
+}: {
+  id: string;
+  title: string;
+  project: Project;
+  worktrees: Worktree[];
+  prs: OpenPullRequest[];
+}) {
+  const key = `${project.id}:${id}`;
+  const collapsed = useUi((s) => !!s.collapsed[key]);
+  const toggle = useUi((s) => s.toggleCollapsed);
+  if (prs.length === 0) return null;
+  return (
+    <>
+      <button
+        onClick={() => toggle(key)}
+        className="mt-3 flex items-center gap-1 pb-1 pl-3.5 text-left fs-sidebar-xs font-semibold tracking-wide text-faint uppercase hover:text-muted"
+      >
+        <ChevronRight size={11} className={clsx("shrink-0 transition-transform", !collapsed && "rotate-90")} />
+        {title} ({prs.length})
+      </button>
+      {!collapsed &&
+        prs.map((pr) => {
+          const worktree = worktrees.find((w) => !w.isMain && w.branch === pr.branch);
+          return worktree ? (
+            <WorktreeRow key={pr.number} project={project} worktree={worktree} openPr={pr} />
+          ) : (
+            <OpenPullRequestRow key={pr.number} project={project} pr={pr} />
+          );
+        })}
+    </>
+  );
+}
+
+function OpenPullRequestRow({ project, pr }: { project: Project; pr: OpenPullRequest }) {
+  const qc = useQueryClient();
+  const select = useUi((s) => s.select);
+  const [creating, setCreating] = useState(false);
+
+  async function create() {
+    setCreating(true);
+    try {
+      const res = await api.createPrWorktree(project.id, { number: pr.number, branch: pr.branch, base: pr.base });
+      await qc.invalidateQueries({ queryKey: keys.worktrees(project.id) });
+      qc.invalidateQueries({ queryKey: keys.branches(project.id) });
+      select(project.id, res.worktree.path);
+      if (res.setupError) toast(`Worktree ${pr.branch} was created, but its setup script failed. See Activity for its output.`);
+    } catch (e) {
+      toast(`Couldn't create a worktree for #${pr.number}: ${errorMessage(e)}`);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div
+      role="button"
+      onClick={() => !creating && create()}
+      title={`${pr.title}${pr.authored ? "" : ` by ${pr.author}`}\nClick to create a worktree`}
+      className={clsx(
+        "flex h-7 cursor-default items-center gap-2 rounded-md pr-1 pl-7 text-faint hover:bg-hover hover:text-muted",
+        creating && "opacity-70",
+      )}
+    >
+      {creating ? (
+        <LoaderCircle size={13} className="shrink-0 animate-spin" />
+      ) : (
+        <GitPullRequest size={13} className="shrink-0" />
+      )}
+      <span className="min-w-0 flex-1 truncate">{pr.title}</span>
+      {pr.approved && <ApprovedMark />}
+      <PrNumberLink pr={pr} />
+    </div>
+  );
+}
+
+function ApprovedMark() {
+  return (
+    <Hint title="Approved" className="text-added">
+      <CircleCheck size={12} />
+    </Hint>
+  );
+}
+
+function PrNumberLink({ pr }: { pr: OpenPullRequest }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        openUrl(pr.url).catch((err) => toast(`Couldn't open ${pr.url}: ${errorMessage(err)}`));
+      }}
+      title={`Open #${pr.number} on GitHub`}
+      className="shrink-0 rounded px-0.5 fs-sidebar-xs text-faint hover:text-accent hover:underline"
+    >
+      #{pr.number}
+    </button>
+  );
+}
+
+function WorktreeRow({ project, worktree, openPr }: { project: Project; worktree: Worktree; openPr?: OpenPullRequest }) {
   const selected = useUi((s) => s.selectedWorktreePath === worktree.path);
   const select = useUi((s) => s.select);
   const openDialog = useUi((s) => s.openDialog);
@@ -267,7 +404,7 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
     >
       <WorktreeIcon worktree={worktree} pr={pr} />
       <span className={clsx("min-w-0 flex-1 truncate", worktree.prunable && "text-faint line-through")}>
-        {worktreeLabel(worktree)}
+        {openPr?.title ?? worktreeLabel(worktree)}
       </span>
       {dirty > 0 && (
         <Hint title={plural(dirty, "uncommitted file")} className="text-warn">
@@ -299,6 +436,8 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
           {comments}
         </span>
       )}
+      {openPr?.approved && <ApprovedMark />}
+      {openPr && <PrNumberLink pr={openPr} />}
       {menuAt && (
         <ContextMenu at={menuAt} items={worktreeActions(project, worktree, openDialog)} onClose={() => setMenuAt(null)} />
       )}

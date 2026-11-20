@@ -550,6 +550,45 @@ pub async fn create_worktree(
 }
 
 #[tauri::command]
+pub async fn open_pull_requests(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> CmdResult<Vec<OpenPullRequest>> {
+    state
+        .projects
+        .open_pull_requests(&project_id)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn create_pr_worktree(
+    state: State<'_, AppState>,
+    project_id: String,
+    req: CreatePrWorktree,
+) -> CmdResult<CreatedWorktree> {
+    let title = format!("Create worktree for #{}", req.number);
+    let project = state.projects.project(&project_id).map_err(err)?;
+    let path = ProjectService::new_worktree_path(&project, &req.branch);
+    let scope = Scope::worktree(path).in_project(&project_id);
+    track(state.app.clone(), title, scope, |log| async move {
+        let created = state
+            .projects
+            .create_pr_worktree(&project_id, req, {
+                let log = log.clone();
+                move |line| log.line(line)
+            })
+            .await
+            .map_err(err)?;
+        if let Some(e) = &created.setup_error {
+            log.fail(format!("The setup script failed: {e}"));
+        }
+        Ok::<_, String>(created)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn remove_worktree(
     state: State<'_, AppState>,
     project_id: String,
