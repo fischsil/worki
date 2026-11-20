@@ -184,7 +184,7 @@ export function DiffView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-13 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span dir="rtl" title={file} className="selectable min-w-0 flex-1 truncate pl-1 text-left font-mono fs-diff">
+        <span dir="rtl" title={file} className="selectable min-w-0 flex-1 truncate pl-1 text-left font-code fs-diff">
           <bdi>{file}</bdi>
         </span>
         {base && <span className="fs-diff-sm text-faint">vs {base}</span>}
@@ -196,7 +196,7 @@ export function DiffView({
           <X size={14} />
         </IconButton>
       </div>
-      <div ref={scroller} className="selectable @container min-h-0 flex-1 overflow-auto font-mono fs-diff leading-[1.6]">
+      <div ref={scroller} className="selectable @container min-h-0 flex-1 overflow-auto font-code fs-diff leading-[1.6]">
         {isLoading && <p className="p-3 text-faint">Loading diff…</p>}
         {error && (
           <div className="p-3">
@@ -413,7 +413,7 @@ function OrphanComments({
           {orphans.map((c) => (
             <Fragment key={c.id}>
               <tr>
-                <td className="font-mono fs-diff-sm text-faint">
+                <td className="font-code fs-diff-sm text-faint">
                   {c.side === "old" ? "removed line " : "line "}
                   {c.line}: {c.code.trim()}
                 </td>
@@ -457,11 +457,11 @@ const commentMarkdown = (worktreePath: string): Components => ({
   ul: ({ children }) => <ul className="my-1.5 list-disc pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="my-1.5 list-decimal pl-5">{children}</ol>,
   pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono fs-diff-sm [&_code]:bg-transparent [&_code]:p-0">
+    <pre className="my-2 overflow-x-auto rounded-md bg-hover px-3 py-2 font-code fs-diff-sm [&_code]:bg-transparent [&_code]:p-0">
       {children}
     </pre>
   ),
-  code: ({ children }) => <code className="rounded bg-hover px-1 py-0.5 font-mono fs-diff-sm">{children}</code>,
+  code: ({ children }) => <code className="rounded bg-hover px-1 py-0.5 font-code fs-diff-sm">{children}</code>,
   blockquote: ({ children }) => <blockquote className="my-1.5 border-l-2 border-line pl-3 text-muted">{children}</blockquote>,
 });
 

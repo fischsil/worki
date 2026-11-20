@@ -322,7 +322,7 @@ function SessionTab({
         </span>
       )}
       {session.runAs && (
-        <span className="rounded bg-hover px-1 font-mono text-[10px] text-faint" title={`Runs as ${session.runAs}`}>
+        <span className="rounded border border-line px-1 font-mono text-[10px] text-muted" title={`Runs as ${session.runAs}`}>
           {session.runAs}
         </span>
       )}

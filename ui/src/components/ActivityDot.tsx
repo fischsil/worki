@@ -32,8 +32,8 @@ export function ActivityDot({ state, title }: { state: DotState; title?: string 
       <span
         className={clsx(
           "relative inline-flex size-2 rounded-full",
-          state === "waiting" && "bg-warn shadow-[0_0_6px_2px_var(--warn),0_0_14px_4px_var(--warn)]",
-          state === "working" && "animate-pulse bg-added shadow-[0_0_6px_2px_var(--added),0_0_14px_4px_var(--added)]",
+          state === "waiting" && "bg-warn shadow-[0_0_6px_2px_var(--warn-glow),0_0_14px_4px_var(--warn-glow)]",
+          state === "working" && "animate-pulse bg-added shadow-[0_0_6px_2px_var(--added-glow),0_0_14px_4px_var(--added-glow)]",
           state === "idle" && "bg-added/45",
           state === "exited" && "bg-faint",
         )}

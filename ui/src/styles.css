@@ -3,6 +3,9 @@
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --font-code: "JetBrains Mono Variable", var(--font-mono);
+  /* Without ligatures, like IntelliJ's default: `=>` and `!=` keep their two characters. */
+  --font-code--font-feature-settings: "calt" 0;
 
   --color-panel: var(--panel);
   --color-elevated: var(--elevated);
@@ -26,25 +29,25 @@
 }
 
 :root {
-  /* Light colors keep text at 6.5:1 or more on every background. */
+  /* Light text colors keep 4.5:1 or more on the panel, bar and sidebar backgrounds. */
   --panel: #ffffff;
   --elevated: #ffffff;
-  --bar: #f2f2f4;
-  --sidebar: #ebebee;
+  --bar: #f6f6f8;
+  --sidebar: #f0f0f3;
   --fg: #1d1d1f;
-  --muted: #3a3a3f;
-  --faint: #505056;
-  --line: rgb(0 0 0 / 0.2);
-  --hover: rgb(0 0 0 / 0.06);
-  --selected: rgb(0 0 0 / 0.14);
-  --accent: #0a4fb0;
+  --muted: #545458;
+  --faint: #6b6b70;
+  --line: rgb(0 0 0 / 0.1);
+  --hover: rgb(0 0 0 / 0.045);
+  --selected: rgb(0 0 0 / 0.08);
+  --accent: #0066cc;
   --accent-fg: #ffffff;
-  --added: #0c5323;
-  --removed: #991b1b;
-  --diff-added: #dcfce4;
-  --diff-added-word: #a5eeb8;
-  --diff-removed: #ffe4e2;
-  --diff-removed-word: #ffbdb8;
+  --added: #1a7f37;
+  --removed: #cf222e;
+  --diff-added: #e6ffec;
+  --diff-added-word: #abf2bc;
+  --diff-removed: #ffebe9;
+  --diff-removed-word: #ffcecb;
   --shiki-foreground: var(--fg);
   --shiki-token-keyword: #cf222e;
   --shiki-token-string: #0a3069;
@@ -55,7 +58,9 @@
   --shiki-token-parameter: #953800;
   --shiki-token-punctuation: var(--fg);
   --shiki-token-link: #0a3069;
-  --warn: #713405;
+  --warn: #875a00;
+  --warn-glow: rgb(214 140 0 / 0.35);
+  --added-glow: color-mix(in srgb, var(--added) 30%, transparent);
   color-scheme: light dark;
 }
 
@@ -86,6 +91,8 @@
     --shiki-token-parameter: #ffa657;
     --shiki-token-link: #a5d6ff;
     --warn: #e3b341;
+    --warn-glow: var(--warn);
+    --added-glow: var(--added);
   }
 }
 
@@ -115,6 +122,8 @@
   --shiki-token-parameter: #ffa657;
   --shiki-token-link: #a5d6ff;
   --warn: #e3b341;
+  --warn-glow: var(--warn);
+  --added-glow: var(--added);
   color-scheme: dark;
 }
 
@@ -233,7 +242,6 @@ button {
   border-radius: 18px;
   overflow: hidden;
   background: var(--panel);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.18);
 }
 
 ::-webkit-scrollbar {
