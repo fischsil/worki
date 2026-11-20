@@ -23,7 +23,7 @@ import {
   Settings2,
   UserRound,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   accountOf,
@@ -47,6 +47,7 @@ import {
   useOpenPullRequests,
   useProjects,
   usePullRequest,
+  useReorderProjects,
   useSessions,
   useWorktrees,
   useWorktreeStatus,
@@ -66,6 +67,7 @@ import { worktreeActions } from "./worktreeActions";
 
 export function Sidebar() {
   const { data: projects = [] } = useProjects();
+  const { navRef, dragging, drop, dragProps } = useProjectReorder(projects);
   const addProject = useAddProject();
   const openDialog = useUi((s) => s.openDialog);
   const width = useUi((s) => s.panelWidths.sidebar);
@@ -98,10 +100,17 @@ export function Sidebar() {
           <ErrorText>{String(addProject.error)}</ErrorText>
         </div>
       )}
-      <nav className="flex-1 overflow-y-auto px-2 pb-3">
+      <nav ref={navRef} className="flex-1 overflow-y-auto px-2 pb-3">
         <NeedsYou projects={projects} />
-        {projects.map((p) => (
-          <ProjectNode key={p.id} project={p} />
+        {projects.map((p, i) => (
+          <ProjectNode
+            key={p.id}
+            project={p}
+            dragging={dragging === p.id}
+            dropBefore={drop === i}
+            dropAfter={drop === projects.length && i === projects.length - 1}
+            dragProps={dragProps(p.id)}
+          />
         ))}
         {projects.length === 0 && (
           <p className="px-2 py-4 fs-sidebar-xs leading-relaxed text-faint">
@@ -158,7 +167,90 @@ function useProjectAccount(project: Project): string | null {
   return account ? (account.email ?? "not signed in") : null;
 }
 
-function ProjectNode({ project }: { project: Project }) {
+function useProjectReorder(projects: Project[]) {
+  const reorder = useReorderProjects();
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [drop, setDrop] = useState<number | null>(null);
+  const endedDrag = useRef(false);
+  const navRef = useRef<HTMLElement>(null);
+
+  function startDrag(e: React.PointerEvent<HTMLElement>, id: string) {
+    const nav = navRef.current;
+    if (e.button !== 0 || !nav) return;
+    const header = e.currentTarget;
+    const { pointerId, clientY: startY } = e;
+    const from = projects.findIndex((p) => p.id === id);
+    let middles: number[] | null = null;
+    let at: number | null = null;
+    endedDrag.current = false;
+
+    const move = (ev: PointerEvent) => {
+      if (!middles) {
+        if (Math.abs(ev.clientY - startY) < 4) return;
+        header.setPointerCapture(pointerId);
+        middles = [...nav.querySelectorAll<HTMLElement>("[data-project]")].map((n) => {
+          const rect = n.getBoundingClientRect();
+          return rect.top + rect.height / 2 + nav.scrollTop;
+        });
+        setDragging(id);
+        document.body.style.cursor = "grabbing";
+      }
+      const y = ev.clientY + nav.scrollTop;
+      const below = middles.findIndex((m) => y < m);
+      const index = below === -1 ? middles.length : below;
+      at = index === from || index === from + 1 ? null : index;
+      setDrop(at);
+    };
+
+    const end = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (!middles) return;
+      endedDrag.current = true;
+      document.body.style.cursor = "";
+      setDragging(null);
+      setDrop(null);
+      if (ev.type !== "pointerup" || at === null) return;
+      const ids = projects.map((p) => p.id);
+      ids.splice(from, 1);
+      ids.splice(at > from ? at - 1 : at, 0, id);
+      reorder.mutate(ids);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
+  const dragProps = (id: string) => ({
+    onPointerDown: (e: React.PointerEvent<HTMLElement>) => startDrag(e, id),
+    onClickCapture: (e: React.MouseEvent) => {
+      if (endedDrag.current) e.stopPropagation();
+      endedDrag.current = false;
+    },
+  });
+
+  return { navRef, dragging, drop, dragProps };
+}
+
+function DropLine({ className }: { className: string }) {
+  return <div className={clsx("pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-removed", className)} />;
+}
+
+function ProjectNode({
+  project,
+  dragging,
+  dropBefore,
+  dropAfter,
+  dragProps,
+}: {
+  project: Project;
+  dragging: boolean;
+  dropBefore: boolean;
+  dropAfter: boolean;
+  dragProps: React.HTMLAttributes<HTMLDivElement>;
+}) {
   const collapsed = useUi((s) => !!s.collapsed[project.id]);
   const toggle = useUi((s) => s.toggleCollapsed);
   const openDialog = useUi((s) => s.openDialog);
@@ -196,8 +288,13 @@ function ProjectNode({ project }: { project: Project }) {
   }
 
   return (
-    <div className="mb-4">
-      <div className="group flex h-7 items-center gap-1 rounded-md pr-1 pl-1 hover:bg-hover">
+    <div data-project={project.id} className={clsx("relative mb-4", dragging && "opacity-50")}>
+      {dropBefore && <DropLine className="-top-2" />}
+      {dropAfter && <DropLine className="-bottom-2" />}
+      <div
+        {...dragProps}
+        className="group flex h-7 items-center gap-1 rounded-md pr-1 pl-1 select-none hover:bg-hover"
+      >
         <button className="flex min-w-0 flex-1 items-center gap-1" onClick={() => toggle(project.id)}>
           <ChevronRight size={13} className={clsx("shrink-0 text-faint transition-transform", !collapsed && "rotate-90")} />
           {project.remote ? (

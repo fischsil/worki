@@ -456,6 +456,9 @@ function handle(cmd: string, args: Record<string, any>): unknown {
   switch (cmd) {
     case "list_projects":
       return projects;
+    case "reorder_projects":
+      projects.sort((a, b) => args.ids.indexOf(a.id) - args.ids.indexOf(b.id));
+      return null;
     case "update_project": {
       const project = projects.find((p) => p.id === args.id);
       if (project) Object.assign(project, args.patch);

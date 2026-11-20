@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 import {
   api,
+  errorMessage,
   type Isolation,
   type IsolationSettings,
   type Project,
@@ -11,6 +12,7 @@ import {
   type SessionInfo,
 } from "./api";
 import { useUi } from "./store";
+import { toast } from "./toast";
 
 export const keys = {
   projects: ["projects"] as const,
@@ -224,6 +226,21 @@ export function useAddProject() {
       if (!project) return;
       qc.invalidateQueries({ queryKey: keys.projects });
       select(project.id, project.repoPath);
+    },
+  });
+}
+
+export function useReorderProjects() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.reorderProjects,
+    onMutate: (ids: string[]) =>
+      qc.setQueryData<Project[]>(keys.projects, (old) =>
+        old && [...old].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)),
+      ),
+    onError: (e) => {
+      toast(`Couldn't save the project order: ${errorMessage(e)}`);
+      qc.invalidateQueries({ queryKey: keys.projects });
     },
   });
 }

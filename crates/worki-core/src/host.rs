@@ -52,7 +52,7 @@ impl Host {
         }
     }
 
-    /// `git -C dir args…` with prompts disabled and untranslated output.
+    /// `git -C dir args…` with prompts disabled, untranslated output and no optional locks.
     pub async fn git_output<I, S>(&self, dir: &Path, args: I) -> Result<(Vec<String>, Output)>
     where
         I: IntoIterator<Item = S>,
@@ -68,7 +68,13 @@ impl Host {
             .output(
                 "git",
                 &full,
-                &[("GIT_TERMINAL_PROMPT", "0"), ("LC_ALL", "C")],
+                &[
+                    ("GIT_TERMINAL_PROMPT", "0"),
+                    ("LC_ALL", "C"),
+                    // Status polls would otherwise take index.lock to refresh the index,
+                    // failing a commit that runs at the same moment.
+                    ("GIT_OPTIONAL_LOCKS", "0"),
+                ],
             )
             .await?;
         Ok((args, out))

@@ -542,6 +542,7 @@ export interface Account {
 
 export const api = {
   listProjects: () => invoke<Project[]>("list_projects"),
+  reorderProjects: (ids: string[]) => invoke<void>("reorder_projects", { ids }),
   addProject: (path: string) => invoke<Project>("add_project", { path }),
   addRemoteProject: (remote: Remote, path: string, password: string | null) =>
     invoke<Project>("add_remote_project", { remote, path, password }),
