@@ -5527,7 +5527,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "worki"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "block2",
@@ -5555,7 +5555,7 @@ dependencies = [
 
 [[package]]
 name = "worki-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -5575,7 +5575,7 @@ dependencies = [
 
 [[package]]
 name = "worki-isolation"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -5588,7 +5588,7 @@ dependencies = [
 
 [[package]]
 name = "worki-pty"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
