@@ -82,6 +82,9 @@ interface UiState {
   autoUpdate: boolean;
   /** Groups each project's worktrees by open pull request: the user's and the ones they review. */
   showPullRequests: boolean;
+  /** The sidebar shows only projects whose agents use this account (`""`: those without one);
+   *  `null` shows all. */
+  accountFilter: string | null;
   /** The branch's commit list is open, not folded to its heading. */
   commitListOpen: boolean;
   dialog: DialogState;
@@ -108,6 +111,7 @@ interface UiState {
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
+  setAccountFilter: (accountFilter: string | null) => void;
   setCommitListOpen: (open: boolean) => void;
   openDialog: (dialog: DialogState) => void;
   closeDialog: () => void;
@@ -145,6 +149,7 @@ export const useUi = create<UiState>()(
       agentView: "terminal",
       autoUpdate: true,
       showPullRequests: true,
+      accountFilter: null,
       commitListOpen: false,
       dialog: null,
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
@@ -184,6 +189,7 @@ export const useUi = create<UiState>()(
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
+      setAccountFilter: (accountFilter) => set({ accountFilter }),
       setCommitListOpen: (commitListOpen) => set({ commitListOpen }),
       openDialog: (dialog) => set({ dialog }),
       closeDialog: () => set({ dialog: null }),
@@ -210,6 +216,7 @@ export const useUi = create<UiState>()(
         agentView,
         autoUpdate,
         showPullRequests,
+        accountFilter,
         commitListOpen,
         prDrafts,
         askPrompts,
@@ -234,6 +241,7 @@ export const useUi = create<UiState>()(
         agentView,
         autoUpdate,
         showPullRequests,
+        accountFilter,
         commitListOpen,
         prDrafts,
         askPrompts,

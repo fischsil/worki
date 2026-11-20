@@ -337,6 +337,17 @@ export const accountOf = (settings: AgentSettings, projectId: string) =>
 export const signInOf = (settings: AgentSettings, projectId: string): AccountSignIn =>
   accountOf(settings, projectId) ? (settings.projectSignIn[projectId] ?? "folder") : "session";
 
+/** The account the project's agents use, when its isolation uses one: `null` without. */
+export function projectAccountId(project: Project, agents: AgentSettings, isolation: IsolationSettings): string | null {
+  if (!isContainer(projectIsolation(project, isolation.default))) return null;
+  if (signInOf(agents, project.id) === "session") return null;
+  return accountOf(agents, project.id);
+}
+
+/** The project `worktree` (a path) belongs to: its main checkout or one of its worktrees. */
+export const projectOfWorktree = (projects: Project[], worktree: string) =>
+  projects.find((p) => worktree === p.repoPath || worktree.startsWith(`${p.worktreeRoot}/`));
+
 /** The local projects that sign in with `accountId`'s login, sharing it. */
 export function loginSharers(settings: AgentSettings, projects: Project[], accountId: string | null): Project[] {
   return projects.filter(

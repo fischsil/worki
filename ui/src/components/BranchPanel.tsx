@@ -31,6 +31,7 @@ import {
   errorMessage,
   type GitOperation,
   isRemoteBranch,
+  projectOfWorktree,
   type PullRequest,
   type SessionInfo,
   type Worktree,
@@ -79,9 +80,7 @@ function useAgentTarget(worktreePath: string) {
         await sendReview(open, prompt);
         setActive(worktreePath, open.id);
       } else if (fallback) {
-        const project = projects.find(
-          (p) => worktreePath === p.repoPath || worktreePath.startsWith(`${p.worktreeRoot}/`),
-        );
+        const project = projectOfWorktree(projects, worktreePath);
         if (!project) return;
         const chat = canChat(fallback) && useUi.getState().agentView === "chat";
         const info = chat
