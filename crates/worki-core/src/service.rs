@@ -1262,9 +1262,13 @@ impl ProjectService {
         git::list_worktrees(&Host::of(&p), &p.repo_path).await
     }
 
-    pub async fn open_pull_requests(&self, id: &str) -> Result<Vec<OpenPullRequest>> {
+    pub async fn open_pull_requests(
+        &self,
+        id: &str,
+        only_requested: bool,
+    ) -> Result<Vec<OpenPullRequest>> {
         let p = self.store.get_project(id)?;
-        github::open_pull_requests(&Host::of(&p), &p.repo_path).await
+        github::open_pull_requests(&Host::of(&p), &p.repo_path, only_requested).await
     }
 
     pub async fn list_branches(&self, id: &str) -> Result<Vec<String>> {
@@ -1508,8 +1512,18 @@ impl ProjectService {
             req.number,
             req.branch
         )));
+        let backup = git::back_up_diverged_pr_branch(host, repo, &req.branch, req.number).await?;
+        if let Some(backup) = &backup {
+            log(LogLine::Info(format!(
+                "The pull request was rebased since you last had {0}: your {0} is kept on {backup} \
+                 and reset to the pull request",
+                req.branch
+            )));
+        }
         git::add_detached_worktree(host, repo, &path).await?;
-        if let Err(e) = github::checkout_pull_request(host, &path, req.number).await {
+        if let Err(e) =
+            github::checkout_pull_request(host, &path, req.number, backup.is_some()).await
+        {
             git::remove_worktree(host, repo, &path, true).await.ok();
             return Err(e);
         }

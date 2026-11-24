@@ -191,6 +191,39 @@ pub async fn branch_exists(host: &Host, repo: &Path, branch: &str) -> bool {
     .is_ok()
 }
 
+/// Keeps the local branch `branch` on a backup branch when it can't be fast-forwarded to pull
+/// request `number` (the pull request was rebased or force-pushed since), so it can be reset to
+/// the pull request without losing commits. Returns the backup branch's name.
+pub async fn back_up_diverged_pr_branch(
+    host: &Host,
+    repo: &Path,
+    branch: &str,
+    number: u64,
+) -> Result<Option<String>> {
+    if !branch_exists(host, repo, branch).await {
+        return Ok(None);
+    }
+    let local = format!("refs/heads/{branch}");
+    let pull = format!("refs/pull/{number}/head");
+    if host
+        .git(repo, ["fetch", "--quiet", "origin", &pull])
+        .await
+        .is_err()
+    {
+        return Ok(None);
+    }
+    let ancestor = ["merge-base", "--is-ancestor", &local, "FETCH_HEAD"];
+    if host.git(repo, ancestor).await.is_ok() {
+        return Ok(None);
+    }
+    let sha = host.git(repo, ["rev-parse", "--short=10", &local]).await?;
+    let backup = format!("backup/{branch}-{}", sha.trim());
+    if !branch_exists(host, repo, &backup).await {
+        host.git(repo, ["branch", &backup, &local]).await?;
+    }
+    Ok(Some(backup))
+}
+
 pub async fn ref_exists(host: &Host, repo: &Path, name: &str) -> bool {
     host.git(
         repo,

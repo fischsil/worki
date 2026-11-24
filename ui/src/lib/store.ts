@@ -82,6 +82,8 @@ interface UiState {
   autoUpdate: boolean;
   /** Groups each project's worktrees by open pull request: the user's and the ones they review. */
   showPullRequests: boolean;
+  /** Reviewing lists only pull requests whose review is requested from the user themself. */
+  onlyRequestedReviews: boolean;
   /** The sidebar shows only projects whose agents use this account (`""`: those without one);
    *  `null` shows all. */
   accountFilter: string | null;
@@ -111,6 +113,7 @@ interface UiState {
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
+  setOnlyRequestedReviews: (on: boolean) => void;
   setAccountFilter: (accountFilter: string | null) => void;
   setCommitListOpen: (open: boolean) => void;
   openDialog: (dialog: DialogState) => void;
@@ -149,6 +152,7 @@ export const useUi = create<UiState>()(
       agentView: "terminal",
       autoUpdate: true,
       showPullRequests: true,
+      onlyRequestedReviews: false,
       accountFilter: null,
       commitListOpen: false,
       dialog: null,
@@ -189,6 +193,7 @@ export const useUi = create<UiState>()(
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
+      setOnlyRequestedReviews: (onlyRequestedReviews) => set({ onlyRequestedReviews }),
       setAccountFilter: (accountFilter) => set({ accountFilter }),
       setCommitListOpen: (commitListOpen) => set({ commitListOpen }),
       openDialog: (dialog) => set({ dialog }),
@@ -216,6 +221,7 @@ export const useUi = create<UiState>()(
         agentView,
         autoUpdate,
         showPullRequests,
+        onlyRequestedReviews,
         accountFilter,
         commitListOpen,
         prDrafts,
@@ -241,6 +247,7 @@ export const useUi = create<UiState>()(
         agentView,
         autoUpdate,
         showPullRequests,
+        onlyRequestedReviews,
         accountFilter,
         commitListOpen,
         prDrafts,

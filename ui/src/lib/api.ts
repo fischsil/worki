@@ -612,7 +612,8 @@ export const api = {
     projectId: string,
     req: { name: string; base: string; runSetup: boolean; isolation: ProjectIsolation },
   ) => invoke<CreatedWorktree>("create_worktree", { projectId, req }),
-  openPullRequests: (projectId: string) => invoke<OpenPullRequest[]>("open_pull_requests", { projectId }),
+  openPullRequests: (projectId: string, onlyRequested: boolean) =>
+    invoke<OpenPullRequest[]>("open_pull_requests", { projectId, onlyRequested }),
   createPrWorktree: (projectId: string, req: { number: number; branch: string; base: string }) =>
     invoke<CreatedWorktree>("create_pr_worktree", { projectId, req }),
   activities: () => invoke<Operation[]>("activities"),

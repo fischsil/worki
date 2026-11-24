@@ -553,10 +553,11 @@ pub async fn create_worktree(
 pub async fn open_pull_requests(
     state: State<'_, AppState>,
     project_id: String,
+    only_requested: bool,
 ) -> CmdResult<Vec<OpenPullRequest>> {
     state
         .projects
-        .open_pull_requests(&project_id)
+        .open_pull_requests(&project_id, only_requested)
         .await
         .map_err(err)
 }

@@ -124,8 +124,14 @@ struct ListedPr {
 }
 
 /// Open pull requests in the repository that the user wrote, was asked to review or reviewed
-/// already (GitHub drops the request once the review is in), newest first.
-pub async fn open_pull_requests(host: &Host, repo: &Path) -> Result<Vec<OpenPullRequest>> {
+/// already (GitHub drops the request once the review is in), newest first. With
+/// `only_requested`, the ones to review are only those whose review is requested from the user
+/// themself, not from one of their teams, and not yet given.
+pub async fn open_pull_requests(
+    host: &Host,
+    repo: &Path,
+    only_requested: bool,
+) -> Result<Vec<OpenPullRequest>> {
     let list = |filter: &'static [&'static str]| async move {
         let mut args = vec![
             "pr",
@@ -140,6 +146,13 @@ pub async fn open_pull_requests(host: &Host, repo: &Path) -> Result<Vec<OpenPull
         args.extend_from_slice(filter);
         gh(host, repo, &args).await
     };
+    if only_requested {
+        let (authored, requested) = tokio::join!(
+            list(&["--author", "@me"]),
+            list(&["--search", "user-review-requested:@me"])
+        );
+        return merge_open_prs(&authored?, &[&requested?]);
+    }
     let (authored, requested, reviewed) = tokio::join!(
         list(&["--author", "@me"]),
         list(&["--search", "review-requested:@me"]),
@@ -175,10 +188,20 @@ fn merge_open_prs(authored: &str, reviewing: &[&str]) -> Result<Vec<OpenPullRequ
 }
 
 /// Checks out the pull request's branch in `worktree`, from a fork too, tracking its remote branch.
-pub async fn checkout_pull_request(host: &Host, worktree: &Path, number: u64) -> Result<()> {
-    gh(host, worktree, &["pr", "checkout", &number.to_string()])
-        .await
-        .map(drop)
+/// With `reset`, a local branch of that name is reset to the pull request rather than
+/// fast-forwarded.
+pub async fn checkout_pull_request(
+    host: &Host,
+    worktree: &Path,
+    number: u64,
+    reset: bool,
+) -> Result<()> {
+    let number = number.to_string();
+    let mut args = vec!["pr", "checkout", &number];
+    if reset {
+        args.push("--force");
+    }
+    gh(host, worktree, &args).await.map(drop)
 }
 
 /// Makes the pull request merge into `base`.

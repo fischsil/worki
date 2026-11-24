@@ -305,7 +305,8 @@ function ProjectNode({
   const { data: worktrees = [], error } = useWorktrees(project.id);
   const account = useProjectAccount(project);
   const showPullRequests = useUi((s) => s.showPullRequests);
-  const { data: prs = [] } = useOpenPullRequests(project.id, showPullRequests);
+  const onlyRequestedReviews = useUi((s) => s.onlyRequestedReviews);
+  const { data: prs = [] } = useOpenPullRequests(project.id, onlyRequestedReviews, showPullRequests);
   const openPrs = showPullRequests ? prs : [];
   const prBranches = new Set(openPrs.map((pr) => pr.branch));
   const unassigned = worktrees.filter((w) => w.isMain || !w.branch || !prBranches.has(w.branch));

@@ -368,3 +368,33 @@ async fn push_keeps_commits_someone_else_pushed() {
     let remote_tip = host.git(dir, ["rev-parse", "origin/work"]).await.unwrap();
     assert_eq!(theirs, remote_tip);
 }
+
+#[tokio::test]
+async fn a_pull_request_branch_that_cant_fast_forward_is_backed_up() {
+    let (tmp, _remote) = with_remote();
+    let dir = tmp.path();
+    let host = Host::Local;
+    let open_pull_request = |branch: &str, base: &str| {
+        sh(dir, &["checkout", "-q", "-b", branch, base]);
+        sh(dir, &["commit", "-q", "--allow-empty", "-m", branch]);
+        let refspec = format!("{branch}:refs/pull/7/head");
+        sh(dir, &["push", "-q", "-f", "origin", &refspec]);
+        sh(dir, &["checkout", "-q", "main"]);
+    };
+    sh(
+        dir,
+        &["commit", "-q", "--allow-empty", "-m", "first version"],
+    );
+    let first = host.git(dir, ["rev-parse", "work"]).await.unwrap();
+
+    open_pull_request("newer", "work");
+    let backup = git::back_up_diverged_pr_branch(&host, dir, "work", 7).await;
+    assert_eq!(backup.unwrap(), None);
+
+    open_pull_request("rebuilt", "main");
+    let backup = git::back_up_diverged_pr_branch(&host, dir, "work", 7).await;
+    let expected = format!("backup/work-{}", &first[..10]);
+    assert_eq!(backup.unwrap(), Some(expected.clone()));
+    let kept = host.git(dir, ["rev-parse", &expected]).await.unwrap();
+    assert_eq!(kept, first);
+}

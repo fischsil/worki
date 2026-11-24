@@ -13,6 +13,8 @@ export function GeneralSettings() {
   const updates = useUpdates();
   const showPullRequests = useUi((s) => s.showPullRequests);
   const setShowPullRequests = useUi((s) => s.setShowPullRequests);
+  const onlyRequestedReviews = useUi((s) => s.onlyRequestedReviews);
+  const setOnlyRequestedReviews = useUi((s) => s.setOnlyRequestedReviews);
   const reopen = useUi((s) => s.reopenSessions);
   const setReopen = useUi((s) => s.setReopenSessions);
   const [keepAwake, setKeepAwake] = useKeepAwake();
@@ -66,6 +68,15 @@ export function GeneralSettings() {
           >
             <span className="text-[13px]">Show open pull requests</span>
           </Checkbox>
+          {showPullRequests && (
+            <Checkbox
+              checked={onlyRequestedReviews}
+              onChange={setOnlyRequestedReviews}
+              hint="Checked: Reviewing lists a pull request only while someone has asked you personally to review it. Unchecked: it also lists pull requests whose review was asked of a team you're in, and the ones you've already reviewed."
+            >
+              <span className="text-[13px]">Under Reviewing, show only pull requests waiting for my review</span>
+            </Checkbox>
+          )}
         </Group>
 
         <Group title="Startup and quit">
