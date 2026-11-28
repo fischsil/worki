@@ -72,6 +72,8 @@ pub enum ChatEvent {
     ToolResult {
         id: String,
         output: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        images: Vec<SentAttachment>,
         is_error: bool,
         parent: Option<String>,
     },

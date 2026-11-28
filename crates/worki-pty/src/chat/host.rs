@@ -420,15 +420,19 @@ fn emit(session: &Session, on_change: &OnChange, mut events: Vec<ChatEvent>) {
     refresh(session, on_change);
 }
 
-/// Moves the images of user messages into `images`, so the history only names them.
+/// Moves the images of user messages and tool results into `images`, so the history only names
+/// them.
 fn keep_images(images: &mut Vec<String>, events: &mut [ChatEvent]) {
     for event in events {
-        if let ChatEvent::User { attachments, .. } = event {
-            for attachment in attachments {
-                if let Some(url) = attachment.data_url.take() {
-                    attachment.image = Some(images.len());
-                    images.push(url);
-                }
+        let attachments = match event {
+            ChatEvent::User { attachments, .. } => attachments,
+            ChatEvent::ToolResult { images: shown, .. } => shown,
+            _ => continue,
+        };
+        for attachment in attachments {
+            if let Some(url) = attachment.data_url.take() {
+                attachment.image = Some(images.len());
+                images.push(url);
             }
         }
     }

@@ -216,8 +216,6 @@ function relative(path: unknown, root: string): string {
 type UserItem = Extract<ChatItem, { kind: "user" }>;
 
 function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }) {
-  const [viewing, setViewing] = useState<string | null>(null);
-  const images = item.attachments.filter((a): a is SentAttachment & { image: number } => a.image !== null);
   const files = item.attachments.filter((a) => a.image === null);
   return (
     <div
@@ -227,13 +225,7 @@ function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }
       )}
     >
       {item.text}
-      {images.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {images.map((a) => (
-            <ChatImage key={a.image} session={session} image={a.image} name={a.name} onOpen={setViewing} />
-          ))}
-        </div>
-      )}
+      <ChatImages session={session} attachments={item.attachments} />
       {files.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {files.map((a, i) => (
@@ -244,8 +236,21 @@ function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }
           ))}
         </div>
       )}
-      {viewing && <ImageViewer src={viewing} onClose={() => setViewing(null)} />}
       {item.queued && <QueuedNote session={session} />}
+    </div>
+  );
+}
+
+function ChatImages({ session, attachments }: { session: SessionInfo; attachments: SentAttachment[] }) {
+  const [viewing, setViewing] = useState<string | null>(null);
+  const images = attachments.filter((a): a is SentAttachment & { image: number } => a.image !== null);
+  if (images.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {images.map((a) => (
+        <ChatImage key={a.image} session={session} image={a.image} name={a.name} onOpen={setViewing} />
+      ))}
+      {viewing && <ImageViewer src={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
@@ -452,6 +457,7 @@ function ToolCall({ tool, session }: { tool: Tool; session: SessionInfo }) {
         <div className="ml-4 flex flex-col gap-2 border-l border-line py-1 pl-3">
           <ToolInput name={tool.name} input={tool.input} />
           {tool.result && <Output text={tool.result.output} error={tool.result.isError} />}
+          {tool.result && <ChatImages session={session} attachments={tool.result.images} />}
           {tool.children.map((child) => (
             <Item key={child.key} item={child} session={session} />
           ))}

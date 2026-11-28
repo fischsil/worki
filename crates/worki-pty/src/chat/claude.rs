@@ -256,12 +256,7 @@ impl ClaudeProtocol {
         blocks
             .iter()
             .flat_map(|block| match block["type"].as_str() {
-                Some("tool_result") => vec![ChatEvent::ToolResult {
-                    id: block["tool_use_id"].as_str().unwrap_or_default().to_owned(),
-                    output: flatten(&block["content"]),
-                    is_error: block["is_error"].as_bool().unwrap_or(false),
-                    parent: parent.clone(),
-                }],
+                Some("tool_result") => vec![tool_result(block, parent.clone())],
                 Some("text") => notice(block["text"].as_str().unwrap_or_default(), &parent),
                 _ => Vec::new(),
             })
@@ -666,23 +661,8 @@ fn past_user_message(content: &Value) -> Vec<ChatEvent> {
     let mut attachments = Vec::new();
     for block in &blocks {
         match block["type"].as_str() {
-            Some("tool_result") => events.push(ChatEvent::ToolResult {
-                id: block["tool_use_id"].as_str().unwrap_or_default().to_owned(),
-                output: flatten(&block["content"]),
-                is_error: block["is_error"].as_bool().unwrap_or(false),
-                parent: None,
-            }),
-            Some("image") => {
-                let source = &block["source"];
-                attachments.push(
-                    match (source["media_type"].as_str(), source["data"].as_str()) {
-                        (Some(media_type), Some(data)) => {
-                            SentAttachment::image("image", data_url(media_type, data))
-                        }
-                        _ => SentAttachment::named("image"),
-                    },
-                );
-            }
+            Some("tool_result") => events.push(tool_result(block, None)),
+            Some("image") => attachments.push(image(block)),
             Some("text") => {
                 let t = block["text"].as_str().unwrap_or_default();
                 if let Some(name) = t
@@ -745,21 +725,39 @@ fn element<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     Some(rest.split_once(&format!("</{name}>"))?.0)
 }
 
-/// A tool result's content: a string, or blocks of text and images.
-fn flatten(content: &Value) -> String {
-    match content {
-        Value::String(s) => s.clone(),
-        Value::Array(blocks) => blocks
+/// A `tool_result` block, whose content is a string or blocks of text and images.
+fn tool_result(block: &Value, parent: Option<String>) -> ChatEvent {
+    let content = &block["content"];
+    let blocks = content.as_array().map(Vec::as_slice).unwrap_or_default();
+    let output = match content.as_str() {
+        Some(s) => s.to_owned(),
+        None => blocks
             .iter()
-            .map(|b| match b["type"].as_str() {
-                Some("text") => b["text"].as_str().unwrap_or_default().to_owned(),
-                Some("image") => "[image]".into(),
-                _ => String::new(),
-            })
+            .filter_map(|b| b["text"].as_str().filter(|_| b["type"] == "text"))
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("\n"),
-        _ => String::new(),
+    };
+    ChatEvent::ToolResult {
+        id: block["tool_use_id"].as_str().unwrap_or_default().to_owned(),
+        output,
+        images: blocks
+            .iter()
+            .filter(|b| b["type"] == "image")
+            .map(image)
+            .collect(),
+        is_error: block["is_error"].as_bool().unwrap_or(false),
+        parent,
+    }
+}
+
+fn image(block: &Value) -> SentAttachment {
+    let source = &block["source"];
+    match (source["media_type"].as_str(), source["data"].as_str()) {
+        (Some(media_type), Some(data)) => {
+            SentAttachment::image("image", data_url(media_type, data))
+        }
+        _ => SentAttachment::named("image"),
     }
 }
 
@@ -793,6 +791,27 @@ mod tests {
 
     fn parse_all(p: &mut ClaudeProtocol, lines: &[&str]) -> Vec<ChatEvent> {
         lines.iter().flat_map(|l| p.parse(l)).collect()
+    }
+
+    #[test]
+    fn keeps_the_images_a_tool_returns() {
+        let mut p = ClaudeProtocol::new("s");
+        let events = p.parse(
+            r#"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"t1","type":"tool_result","content":[{"type":"text","text":"a.png"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBO"}}]}]},"parent_tool_use_id":null}"#,
+        );
+        assert_eq!(
+            events,
+            vec![ChatEvent::ToolResult {
+                id: "t1".into(),
+                output: "a.png".into(),
+                images: vec![SentAttachment::image(
+                    "image",
+                    "data:image/png;base64,iVBO".into()
+                )],
+                is_error: false,
+                parent: None,
+            }]
+        );
     }
 
     #[test]
@@ -861,6 +880,7 @@ mod tests {
                 ChatEvent::ToolResult {
                     id: "toolu_1".into(),
                     output: "hello.txt".into(),
+                    images: Vec::new(),
                     is_error: false,
                     parent: None,
                 },
@@ -1248,6 +1268,7 @@ mod tests {
                 ChatEvent::ToolResult {
                     id: "t1".into(),
                     output: "a".into(),
+                    images: Vec::new(),
                     is_error: false,
                     parent: None,
                 },

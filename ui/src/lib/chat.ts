@@ -26,7 +26,7 @@ export type ChatItem =
       key: string;
       name: string;
       input: Record<string, unknown>;
-      result: { output: string; isError: boolean } | null;
+      result: { output: string; images: SentAttachment[]; isError: boolean } | null;
       /** What a subagent did for this tool call. */
       children: ChatItem[];
     }
@@ -125,7 +125,7 @@ export class ChatModel {
         break;
       case "toolResult": {
         const item = this.byKey.get(event.id);
-        if (item?.kind === "tool") this.replace({ ...item, result: { output: event.output, isError: event.isError } });
+        if (item?.kind === "tool") this.replace({ ...item, result: { output: event.output, images: event.images ?? [], isError: event.isError } });
         break;
       }
       case "permission":

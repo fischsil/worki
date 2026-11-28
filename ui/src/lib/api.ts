@@ -444,7 +444,7 @@ export type ChatEvent = (
   | { type: "textDelta"; id: string; text: string; parent: string | null }
   | { type: "text"; id: string; text: string; parent: string | null }
   | { type: "toolCall"; id: string; name: string; input: unknown; parent: string | null }
-  | { type: "toolResult"; id: string; output: string; isError: boolean; parent: string | null }
+  | { type: "toolResult"; id: string; output: string; images?: SentAttachment[]; isError: boolean; parent: string | null }
   | { type: "permission"; requestId: string; tool: string; input: unknown; questions: ChatQuestion[] }
   | { type: "permissionResolved"; requestId: string; allowed: boolean; elsewhere: boolean }
   | { type: "notice"; text: string }

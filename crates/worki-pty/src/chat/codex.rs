@@ -757,6 +757,7 @@ fn item_events(item: &Value, done: bool) -> Vec<ChatEvent> {
     let result = |output: String, is_error: bool| ChatEvent::ToolResult {
         id: id.clone(),
         output,
+        images: Vec::new(),
         is_error,
         parent: None,
     };
@@ -1113,6 +1114,7 @@ mod tests {
                 ChatEvent::ToolResult {
                     id: "exec1".into(),
                     output: "hello\n".into(),
+                    images: Vec::new(),
                     is_error: false,
                     parent: None
                 },
@@ -1125,6 +1127,7 @@ mod tests {
                 ChatEvent::ToolResult {
                     id: "fc1".into(),
                     output: String::new(),
+                    images: Vec::new(),
                     is_error: false,
                     parent: None
                 },
