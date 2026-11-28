@@ -4,7 +4,7 @@ import { Plus, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, errorMessage, type Project, type SessionInfo, type Worktree } from "../lib/api";
-import { keys, useWorktreeShells } from "../lib/queries";
+import { keys, rememberSession, useWorktreeShells } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { ResizeHandle } from "./ResizeHandle";
 import { TerminalView } from "./TerminalView";
@@ -29,9 +29,7 @@ export function TerminalPanel({ project, worktree }: { project: Project; worktre
     setError(null);
     try {
       const info = await api.spawnWorktreeShell(project.id, worktree.path, 120, 12);
-      qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) =>
-        old.some((s) => s.id === info.id) ? old : [...old, info],
-      );
+      rememberSession(qc, info);
       setActive(worktree.path, info.id);
     } catch (e) {
       setError(errorMessage(e));

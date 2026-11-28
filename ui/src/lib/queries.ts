@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
@@ -160,14 +160,17 @@ const tabSessions = (all: SessionInfo[]) => all.filter((s) => !s.panel);
 /** Sessions shown as tabs; the shells of the terminal panels are left out. */
 export const useSessions = () => useQuery({ queryKey: keys.sessions, queryFn: api.listSessions, select: tabSessions });
 
+export const worktreeShells = (all: SessionInfo[], worktreePath: string) =>
+  all.filter((s) => s.panel && s.worktreePath === worktreePath).sort((a, b) => a.createdAt - b.createdAt);
+
 /** The shell in a worktree's terminal panel, once it was started. */
 export const useWorktreeShells = (worktreePath: string) =>
-  useQuery({
-    queryKey: keys.sessions,
-    queryFn: api.listSessions,
-    select: (all) =>
-      all.filter((s) => s.panel && s.worktreePath === worktreePath).sort((a, b) => a.createdAt - b.createdAt),
-  });
+  useQuery({ queryKey: keys.sessions, queryFn: api.listSessions, select: (all) => worktreeShells(all, worktreePath) });
+
+export const rememberSession = (qc: QueryClient, info: SessionInfo) =>
+  qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) =>
+    old.some((s) => s.id === info.id) ? old : [...old, info],
+  );
 
 export const useAgentSettings = () => useQuery({ queryKey: keys.agentSettings, queryFn: api.agentSettings });
 

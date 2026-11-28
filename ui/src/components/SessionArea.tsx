@@ -18,7 +18,7 @@ import { lastStep, useWorktreeActivity } from "../lib/activities";
 import { onCommand } from "../lib/commands";
 import { useCopy } from "../lib/useCopy";
 import { type PendingSignIn, useSignIns } from "../lib/signIns";
-import { keys, useAgentSettings, useSessions } from "../lib/queries";
+import { keys, rememberSession, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
 import { AgentStatus } from "./AgentStatus";
@@ -56,9 +56,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
         const info = chat
           ? await api.spawnChatSession(project.id, worktree.path, profile.id, resumeId)
           : await api.spawnSession(project.id, worktree.path, profileId, INITIAL_COLS, INITIAL_ROWS, resumeId);
-        qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) =>
-          old.some((s) => s.id === info.id) ? old : [...old, info],
-        );
+        rememberSession(qc, info);
         setActive(worktree.path, info.id);
       } catch {
         // The worktree's activity shows why the start failed.

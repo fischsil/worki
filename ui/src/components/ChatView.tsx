@@ -45,6 +45,7 @@ import {
   type SelectHTMLAttributes,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -72,6 +73,7 @@ import { elapsed, useNow } from "../lib/time";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
 import { ChatVisual, ImageViewer, VISUAL_LANGUAGES } from "./ChatVisual";
+import { CodeBlock, RunTargetContext } from "./CodeBlock";
 import { Button, ErrorText, Textarea } from "./ui";
 
 type Permission = Extract<ChatItem, { kind: "permission" }>;
@@ -82,6 +84,10 @@ export function ChatView({ session, projectId }: { session: SessionInfo; project
   const chat = useChat(session.id);
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const runTarget = useMemo(
+    () => ({ projectId, worktreePath: session.worktreePath }),
+    [projectId, session.worktreePath],
+  );
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -110,9 +116,11 @@ export function ChatView({ session, projectId }: { session: SessionInfo; project
           {chat.items.length === 0 && (
             <p className="py-10 text-center fs-chat-xs text-faint">Ask {session.title} something to start.</p>
           )}
-          {chat.items.map((item) => (
-            <Item key={item.key} item={item} session={session} />
-          ))}
+          <RunTargetContext value={runTarget}>
+            {chat.items.map((item) => (
+              <Item key={item.key} item={item} session={session} />
+            ))}
+          </RunTargetContext>
           {session.activity === "working" && chat.open.length === 0 && (
             <Activity chat={chat} root={session.worktreePath} />
           )}
@@ -180,12 +188,12 @@ const markdown: Components = {
   pre: ({ children }) => {
     const code = isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : null;
     const language = /language-(\w+)/.exec(code?.className ?? "")?.[1];
-    if (language && VISUAL_LANGUAGES.includes(language))
-      return <ChatVisual language={language} source={String(code?.children ?? "").replace(/\n$/, "")} />;
+    const source = String(code?.children ?? "").replace(/\n$/, "");
+    if (language && VISUAL_LANGUAGES.includes(language)) return <ChatVisual language={language} source={source} />;
     return (
-      <pre className="my-2 overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono fs-chat-xs [&_code]:bg-transparent [&_code]:p-0">
+      <CodeBlock language={language} source={source}>
         {children}
-      </pre>
+      </CodeBlock>
     );
   },
   code: ({ children }) => <code className="rounded bg-hover px-1 py-0.5 font-mono fs-chat-sm">{children}</code>,
