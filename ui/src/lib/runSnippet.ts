@@ -4,11 +4,10 @@ import { api, type SessionInfo } from "./api";
 import { keys, rememberSession, worktreeShells } from "./queries";
 import { useUi } from "./store";
 
-export type RunWhere = "isolation" | "host";
-
 export interface RunTarget {
   projectId: string;
   worktreePath: string;
+  sessionId: string;
 }
 
 const TRANSCRIPT_LANGUAGES = ["console", "shell-session", "shellsession"];
@@ -27,8 +26,8 @@ export function snippetCommand(language: string | undefined, source: string): st
   return commands.length ? commands.join("\n") : source.trim();
 }
 
-export async function runSnippet(qc: QueryClient, target: RunTarget, where: RunWhere, command: string) {
-  const shell = where === "host" ? await hostShell(qc, target) : await isolatedShell(qc, target);
+export async function runOnHost(qc: QueryClient, target: RunTarget, command: string) {
+  const shell = await hostShell(qc, target);
   await api.writeSession(shell.id, `\x15${command.replace(/\n/g, "\r")}\r`);
 }
 
@@ -45,26 +44,6 @@ async function hostShell(qc: QueryClient, { projectId, worktreePath }: RunTarget
   }
   setActiveTerminal(worktreePath, shell.id);
   if (!showTerminal) toggleTerminal();
-  return shell;
-}
-
-async function isolatedShell(qc: QueryClient, { projectId, worktreePath }: RunTarget): Promise<SessionInfo> {
-  const plainShells = cached(qc).filter(
-    (s) =>
-      !s.panel &&
-      s.kind === "terminal" &&
-      s.profileId === null &&
-      s.worktreePath === worktreePath &&
-      s.state.kind === "running",
-  );
-  let shell = plainShells.at(-1);
-  const fresh = !shell;
-  if (!shell) {
-    shell = await api.spawnSession(projectId, worktreePath, null, 120, 32, null);
-    rememberSession(qc, shell);
-  }
-  useUi.getState().setActiveSession(worktreePath, shell.id);
-  if (fresh) await untilReady(shell.id);
   return shell;
 }
 

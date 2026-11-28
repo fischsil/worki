@@ -73,7 +73,7 @@ import { elapsed, useNow } from "../lib/time";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
 import { ChatVisual, ImageViewer, VISUAL_LANGUAGES } from "./ChatVisual";
-import { CodeBlock, RunTargetContext } from "./CodeBlock";
+import { CodeBlock, RunTargetContext, SnippetScope } from "./CodeBlock";
 import { Button, ErrorText, Textarea } from "./ui";
 
 type Permission = Extract<ChatItem, { kind: "permission" }>;
@@ -85,8 +85,8 @@ export function ChatView({ session, projectId }: { session: SessionInfo; project
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const runTarget = useMemo(
-    () => ({ projectId, worktreePath: session.worktreePath }),
-    [projectId, session.worktreePath],
+    () => ({ projectId, worktreePath: session.worktreePath, sessionId: session.id }),
+    [projectId, session.worktreePath, session.id],
   );
 
   useLayoutEffect(() => {
@@ -133,6 +133,14 @@ export function ChatView({ session, projectId }: { session: SessionInfo; project
 }
 
 const Item = memo(function Item({ item, session }: { item: ChatItem; session: SessionInfo }) {
+  return (
+    <SnippetScope value={item.key}>
+      <ItemContent item={item} session={session} />
+    </SnippetScope>
+  );
+});
+
+function ItemContent({ item, session }: { item: ChatItem; session: SessionInfo }) {
   switch (item.kind) {
     case "user":
       return <UserMessage item={item} session={session} />;
@@ -162,7 +170,7 @@ const Item = memo(function Item({ item, session }: { item: ChatItem; session: Se
         </div>
       );
   }
-});
+}
 
 const markdown: Components = {
   a: ({ href, children }) => (
@@ -185,13 +193,13 @@ const markdown: Components = {
   h2: ({ children }) => <h3 className="mt-3 mb-1 fs-chat-lg font-semibold">{children}</h3>,
   h3: ({ children }) => <h4 className="mt-2 mb-1 font-semibold">{children}</h4>,
   blockquote: ({ children }) => <blockquote className="my-1.5 border-l-2 border-line pl-3 text-muted">{children}</blockquote>,
-  pre: ({ children }) => {
+  pre: ({ node, children }) => {
     const code = isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : null;
     const language = /language-(\w+)/.exec(code?.className ?? "")?.[1];
     const source = String(code?.children ?? "").replace(/\n$/, "");
     if (language && VISUAL_LANGUAGES.includes(language)) return <ChatVisual language={language} source={source} />;
     return (
-      <CodeBlock language={language} source={source}>
+      <CodeBlock language={language} source={source} offset={node?.position?.start.offset ?? 0}>
         {children}
       </CodeBlock>
     );

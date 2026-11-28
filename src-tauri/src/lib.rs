@@ -7,6 +7,7 @@ mod dictation;
 mod isolation;
 mod openers;
 mod sessions;
+mod snippets;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -135,6 +136,7 @@ pub fn run() {
             app.manage(activity::Activities::default());
             app.manage(accounts::Logins::default());
             app.manage(sessions::AccountChecks::default());
+            app.manage(snippets::Snippets::default());
             app.manage(AppState {
                 projects: Arc::new(projects),
                 sessions: Arc::new(sessions),
@@ -241,6 +243,8 @@ pub fn run() {
             sessions::interrupt_chat,
             sessions::background_chat_commands,
             sessions::stop_chat_tasks,
+            snippets::run_snippet,
+            snippets::stop_snippet,
             sessions::session_continue_command,
             sessions::change_chat_setting,
             sessions::attach_session,

@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tokio::sync::Notify;
 
 use crate::config::RepoConfig;
 use crate::model::*;
-use worki_isolation::{Backend, LaunchRequest, Outdated, Resources, Workspace};
+use worki_isolation::{Backend, Launch, LaunchRequest, Outdated, Resources, Workspace};
 
 use crate::openers::{self, OpenerSettings};
-use crate::setup::{run_captured, run_logged};
+use crate::setup::{run_captured, run_logged, run_streamed, SNIPPET_WRAPPER};
 use crate::store::Store;
 use crate::{agents, git, github, paths, secrets, Error, Host, Result};
 
@@ -1429,18 +1430,66 @@ impl ProjectService {
             .to_owned();
         let command = crate::launch::writer_command(template, writer.fork.as_deref());
         let isolation = self.grant_access(&project, Some(worktree)).await?;
+        let launch = self
+            .worktree_launch(
+                &project,
+                isolation,
+                worktree,
+                command,
+                false,
+                ("WORKI_PROMPT", prompt),
+            )
+            .await?;
+        Ok((name, run_captured(launch).await?))
+    }
+
+    pub async fn run_snippet(
+        &self,
+        project_id: &str,
+        worktree: &Path,
+        snippet: &str,
+        log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
+        stop: &Notify,
+    ) -> Result<Option<i32>> {
+        let project = self.store.get_project(project_id)?;
+        let isolation = tokio::select! {
+            isolation = self.grant_access(&project, Some(worktree)) => isolation?,
+            () = stop.notified() => return Ok(None),
+        };
+        let snippet = ("WORKI_SNIPPET", snippet.to_owned());
+        let launch = self
+            .worktree_launch(
+                &project,
+                isolation,
+                worktree,
+                SNIPPET_WRAPPER.into(),
+                true,
+                snippet,
+            )
+            .await?;
+        run_streamed(launch, log, stop.notified()).await
+    }
+
+    async fn worktree_launch(
+        &self,
+        project: &Project,
+        isolation: Isolation,
+        worktree: &Path,
+        command: String,
+        stdin: bool,
+        (name, value): (&str, String),
+    ) -> Result<Launch> {
         let mut env = self.secret_env(Some(&project.id), &isolation)?;
-        env.push(("WORKI_PROMPT".into(), prompt));
+        env.push((name.into(), value));
         let req = LaunchRequest {
             cwd: worktree.to_path_buf(),
             command: Some(command),
             interactive: false,
-            stdin: false,
+            stdin,
             env,
             session: None,
         };
-        let launch = blocking(move || isolation.backend().launch(&req)).await?;
-        Ok((name, run_captured(launch).await?))
+        blocking(move || isolation.backend().launch(&req)).await
     }
 
     pub async fn branch_changes(&self, worktree: &Path, base: &str) -> Result<BranchChanges> {

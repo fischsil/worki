@@ -697,6 +697,12 @@ export const api = {
   removeIsolation: (isolation: Isolation) => invoke<void>("isolation_remove", { isolation }),
   agentStatuses: (isolation: Isolation) => invoke<AgentStatus[]>("agent_statuses", { isolation }),
   shareAgent: (isolation: Isolation, executable: string) => invoke<string>("share_agent", { isolation, executable }),
+  runSnippet: (projectId: string, worktreePath: string, runId: string, command: string, onOutput: (line: LogLine) => void) => {
+    const channel = new Channel<LogLine>();
+    channel.onmessage = onOutput;
+    return invoke<number | null>("run_snippet", { projectId, worktreePath, runId, command, onOutput: channel });
+  },
+  stopSnippet: (runId: string) => invoke<void>("stop_snippet", { runId }),
   /** Signs agents in `isolation` in with a new token; sessions using it show `name`. */
   signInAgent: (isolation: Isolation, executable: string, name: string, onLog: (line: LogLine) => void) => {
     const channel = new Channel<LogLine>();

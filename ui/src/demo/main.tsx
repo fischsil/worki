@@ -323,6 +323,7 @@ const chatEvents: object[] = [
 type DemoChannel = { onmessage?: (data: number[]) => void };
 let chatSettings: Record<string, string> = { model: "claude-opus-5-5", permissionMode: "default", effort: "high" };
 let chatChannel: DemoChannel | null = null;
+const snippetStops = new Map<string, () => void>();
 let sentMessages = 0;
 let shellCount = 0;
 const sendTo = (channel: DemoChannel | null, events: object[]) =>
@@ -855,6 +856,32 @@ function handle(cmd: string, args: Record<string, any>): unknown {
         "origin/feat/search-filters",
         "origin/fix/checkout-tax-rounding",
       ];
+    case "run_snippet":
+      return new Promise((resolve) => {
+        const output = [
+          { stream: "stdout", line: "> acme-web@1.0.0 test /workspace" },
+          { stream: "stdout", line: "> vitest run src/checkout" },
+          { stream: "stdout", line: " ✓ src/checkout/Summary.test.tsx (6 tests) 41ms" },
+          { stream: "stdout", line: " ✓ src/checkout/Cart.test.tsx (12 tests) 88ms" },
+          { stream: "stderr", line: "(node:42) Warning: --experimental-vm-modules is an experimental feature" },
+          { stream: "stdout", line: " Test Files  2 passed (2)" },
+          { stream: "stdout", line: "      Tests  18 passed (18)" },
+        ];
+        const timer = setInterval(() => {
+          const line = output.shift();
+          if (line) args.onOutput.onmessage?.(line);
+          else finish(0);
+        }, 300);
+        const finish = (code: number | null) => {
+          clearInterval(timer);
+          snippetStops.delete(args.runId);
+          resolve(code);
+        };
+        snippetStops.set(args.runId, () => finish(null));
+      });
+    case "stop_snippet":
+      snippetStops.get(args.runId)?.();
+      return null;
     case "stop_chat_tasks":
       sendChat({ type: "backgroundTasks", tasks: [] });
       return null;

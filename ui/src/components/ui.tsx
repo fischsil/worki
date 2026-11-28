@@ -499,12 +499,17 @@ export function DiffStat({
 /** Streamed command output that keeps scrolled to the newest line. */
 export function LogView({ lines, className }: { lines: LogLine[]; className?: string }) {
   const box = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
   useEffect(() => {
-    if (box.current) box.current.scrollTop = box.current.scrollHeight;
+    if (box.current && pinned.current) box.current.scrollTop = box.current.scrollHeight;
   }, [lines]);
   return (
     <div
       ref={box}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
+      }}
       className={clsx(
         "selectable overflow-y-auto rounded-md border border-line p-2 font-mono text-[11px] leading-relaxed",
         className,
